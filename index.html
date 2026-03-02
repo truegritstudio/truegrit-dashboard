@@ -621,6 +621,10 @@
       <button class="btn btn-outline btn-sm" onclick="exportData()">↓ Export CSV</button>
       <!-- Cloud sync status badge -->
       <span id="syncStatusBadge" style="font-size:10px;font-weight:700;border:1px solid transparent;border-radius:6px;padding:3px 8px;"></span>
+      <label style="cursor:pointer;margin:0;" title="Import any Rezerv CSV report — auto-detected">
+        <span class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:5px;color:var(--gold);border-color:rgba(201,168,76,0.4);background:rgba(201,168,76,0.05);">📥 Rezerv Import</span>
+        <input type="file" accept=".csv" onchange="smartRezervImport(this)" style="display:none;" multiple>
+      </label>
       <button class="btn btn-gold btn-sm" onclick="openAddModal()">+ Add Entry</button>
     </div>
   </div>
@@ -738,10 +742,7 @@
           <span class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:5px;">📂 Upload CSV</span>
           <input type="file" accept=".csv" onchange="importSessionsCSV(this)" style="display:none;">
         </label>
-        <label style="cursor:pointer;" title="Import Rezerv attendance export CSV">
-          <span class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:5px;color:var(--gold);border-color:rgba(201,168,76,0.4);">📥 Import Rezerv CSV</span>
-          <input type="file" accept=".csv" onchange="importRezervCSV(this)" style="display:none;">
-        </label>
+
         <button class="btn btn-outline btn-sm" onclick="downloadSessionTemplate()">↓ Template</button>
         <button class="btn admin-reset-btn" onclick="openResetModal()" style="display:none;background:rgba(192,112,112,0.08);border:1px solid rgba(192,112,112,0.25);color:#c07070;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;">⚠ Reset</button>
         <button class="btn btn-gold btn-sm" onclick="openSessionModal()">+ Log Session</button>
@@ -1747,6 +1748,22 @@
       <div class="form-actions">
         <button class="btn btn-outline" onclick="closeModal('modalResetTab')">Cancel</button>
         <button onclick="executeReset()" style="background:rgba(192,112,112,0.15);border:1px solid rgba(192,112,112,0.5);color:#c07070;border-radius:8px;padding:8px 20px;font-weight:700;font-size:13px;cursor:pointer;">⚠ RESET SELECTED</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Rezerv Import Modal -->
+<div class="overlay" id="modalRezervImport">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <div class="modal-title">📥 Rezerv Import Results</div>
+      <button class="modal-close" onclick="closeModal('modalRezervImport')">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="rezervImportResults" style="display:flex;flex-direction:column;gap:12px;"></div>
+      <div class="form-actions" style="margin-top:16px;">
+        <button class="btn btn-gold" onclick="closeModal('modalRezervImport');renderAll();">✓ Done</button>
       </div>
     </div>
   </div>
@@ -3717,6 +3734,236 @@ function openSessionModal() {
   openModal('modalSession');
 }
 
+// ══════════════════════════════════════════════════════════════════
+// SMART REZERV UNIVERSAL IMPORTER
+// Auto-detects: Attendance, Sales by Plan, Sales by Package, Sales over Time
+// ══════════════════════════════════════════════════════════════════
+
+function parseRezervDate(d) {
+  if (!d) return '';
+  const clean = d.trim().split(' ')[0];
+  const parts = clean.split('/');
+  if (parts.length === 3) {
+    let [a, b, c] = parts;
+    // DD/MM/YY or DD/MM/YYYY
+    const year = c.length === 2 ? '20' + c : c;
+    return year + '-' + b.padStart(2,'0') + '-' + a.padStart(2,'0');
+  }
+  return d;
+}
+
+function cleanStaffName(s) {
+  if (!s || !s.trim() || s.trim() === '-') return '';
+  return s.replace(/Coach\s+/gi,'').replace('True Grit Admin','Admin').trim();
+}
+
+function mapRezervPackage(p) {
+  const m = {
+    'grind':'Grind — 8 Sessions','resolve':'Resolve — 12 Sessions',
+    'intense':'Intense — 24 Sessions','transform':'Transform — 36 Sessions',
+    'founding grind':'Founding Grind — 8 Sessions','founding resolve':'Founding Resolve — 12 Sessions',
+    'founding intense':'Founding Intense — 24 Sessions','founding transform':'Founding Transform — 36 Sessions',
+    'drop-in':'Single Session','free':'Complimentary','trial':'Trial Session'
+  };
+  return m[(p||'').toLowerCase().trim()] || p || '';
+}
+
+function detectRezervType(h) {
+  const s = h.join('|').toLowerCase();
+  if (s.includes('date_of_service') && s.includes('customer')) return 'attendance';
+  if (s.includes('pricingplan') || s.includes('pricing_plan')) return 'pricing_plan';
+  if (s.includes('packageid') || (s.includes('package') && s.includes('recognised_grosssales'))) return 'by_package';
+  if (s.includes('datetime') && s.includes('recognisedpackagequantity')) return 'overtime';
+  if (s.includes('classid') || s.includes('classname')) return 'by_class';
+  return 'unknown';
+}
+
+async function smartRezervImport(input) {
+  const files = Array.from(input.files);
+  if (!files.length) return;
+  const resultsEl = document.getElementById('rezervImportResults');
+  resultsEl.innerHTML = '<div style="color:var(--muted);font-size:12px;">⟳ Processing...</div>';
+  openModal('modalRezervImport');
+
+  const allResults = [];
+  for (const file of files) {
+    const text = await file.text();
+    const lines = text.split('\n').filter(l => l.trim());
+    if (lines.length < 2) { allResults.push({file:file.name, icon:'⚠️', type:'Empty file', html:'No data found'}); continue; }
+    const rawH = parseCSVRow(lines[0]);
+    const h = rawH.map(x => x.trim().toLowerCase().replace(/[^a-z0-9]/g,'_'));
+    const dataRows = lines.slice(1);
+    const ftype = detectRezervType(h);
+    let res;
+    if (ftype === 'attendance')    res = rzImportAttendance(dataRows, h);
+    else if (ftype === 'pricing_plan') res = rzImportSalesByPlan(dataRows, h);
+    else if (ftype === 'by_package')   res = rzImportByPackage(dataRows, h);
+    else if (ftype === 'overtime')     res = rzImportOvertime(dataRows, h);
+    else if (ftype === 'by_class')     res = {icon:'📊', type:'Sales by Class', html:'Analytics file — no import needed'};
+    else                               res = {icon:'⚠️', type:'Unknown format', html:'File not recognized'};
+    allResults.push({file: file.name, ...res});
+  }
+
+  resultsEl.innerHTML = allResults.map(r => `
+    <div style="background:rgba(201,168,76,0.05);border:1px solid rgba(201,168,76,0.2);border-radius:8px;padding:14px;">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:4px;">${r.file}</div>
+      <div style="font-weight:700;color:var(--gold);font-size:13px;margin-bottom:6px;">${r.icon||'✅'} ${r.type}</div>
+      <div style="font-size:12px;line-height:1.8;">${r.html||''}</div>
+    </div>`).join('');
+
+  input.value = '';
+  renderAll();
+}
+
+function rzGet(row, header, keys) {
+  for (const k of (Array.isArray(keys)?keys:[keys])) {
+    const i = header.indexOf(k);
+    if (i !== -1) return (row[i]||'').trim().replace(/^"|"$/g,'');
+  }
+  return '';
+}
+
+function rzImportAttendance(rows, h) {
+  const sessions = load('sessions');
+  const leads = load('leads');
+  const members = load('members');
+  let imported=0, memberCreated=0, leadCreated=0, deducted=0, skipped=0;
+
+  rows.forEach((rowStr, ri) => {
+    const row = parseCSVRow(rowStr);
+    const customer = rzGet(row, h, 'customer');
+    const rawDate  = rzGet(row, h, 'date_of_service');
+    if (!customer || customer.toLowerCase()==='walk-in customer' || !rawDate) { skipped++; return; }
+
+    const bookingRef = rzGet(row, h, 'booking_ref_no_');
+    if (bookingRef && sessions.some(s=>s.bookingRef===bookingRef)) { skipped++; return; }
+
+    const date    = parseRezervDate(rawDate);
+    const time    = rzGet(row, h, 'start_time');
+    const staff   = cleanStaffName(rzGet(row, h, 'staff'));
+    const service = rzGet(row, h, 'service_name');
+    const payment = rzGet(row, h, 'payment');
+    const mobile  = rzGet(row, h, 'mobile_number').replace(/^-$/,'');
+    const email   = rzGet(row, h, 'email_address').replace(/^-$/,'');
+    const revenue = parseFloat(rzGet(row, h, 'revenue_per_booking'))||0;
+    const rawSt   = rzGet(row, h, 'status');
+    const stMap   = {'completed':'Completed','no show':'No Show','cancelled':'Cancelled'};
+    const status  = stMap[rawSt.toLowerCase()] || rawSt;
+
+    const svc = service.toLowerCase();
+    const cat = rzGet(row, h, 'category').toLowerCase();
+    let category = 'Training';
+    if (svc.includes('studio tour') || cat.includes('day pass')) category = 'Walk-in';
+    else if (svc.includes('trial') || svc.includes('assessment')) category = 'Trial';
+    else if (svc.includes('class') || svc.includes('group')) category = 'Group Class';
+
+    sessions.unshift({id:Date.now()+ri, date, time, member:customer, trainer:staff, category,
+      type:service||'Personal Training', status,
+      notes:'Rezerv'+(bookingRef?' · '+bookingRef:''), bookingRef,
+      package:mapRezervPackage(payment), revenue, importedRezervCSV:true});
+    imported++;
+
+    if (category==='Training' && status==='Completed' && autoDeductSession(customer,staff,date)) deducted++;
+
+    if ((mobile||email) && !members.some(m=>m.name?.toLowerCase()===customer.toLowerCase())) {
+      members.push({id:Date.now()+ri+50000, name:customer, contact:mobile, email,
+        package:mapRezervPackage(payment), trainer:staff, start:date,
+        status:'Active', goal:'Corrective Exercise', notes:'Auto-created from Rezerv'});
+      memberCreated++;
+    }
+
+    if ((category==='Walk-in'||category==='Trial') && !leads.some(l=>l.name?.toLowerCase()===customer.toLowerCase())) {
+      leads.unshift({id:Date.now()+ri+20000, date, name:customer,
+        type:category==='Trial'?'Trial Session':'Visit / Walk-in',
+        source:'Rezerv', contact:mobile, assigned:staff, status:'New', notes:'Rezerv · '+date});
+      leadCreated++;
+    }
+  });
+
+  save('sessions', sessions);
+  save('leads', leads);
+  if (memberCreated>0) save('members', members);
+
+  return {icon:'📋', type:'Attendance → Sessions + Members + Leads',
+    html:`📋 ${imported} sessions<br>⏭ ${skipped} skipped<br>📉 ${deducted} auto-deducted<br>👥 ${memberCreated} new members<br>📊 ${leadCreated} new leads`};
+}
+
+function rzImportSalesByPlan(rows, h) {
+  const sales = load('sales');
+  const today = new Date().toISOString().split('T')[0];
+  let imported=0, skipped=0;
+
+  rows.forEach((rowStr, ri) => {
+    const row = parseCSVRow(rowStr);
+    const plan  = rzGet(row, h, 'pricingplan');
+    const qty   = parseInt(rzGet(row, h, 'quantity'))||0;
+    const gross = parseFloat(rzGet(row, h, 'grosssales'))||0;
+    const disc  = parseFloat(rzGet(row, h, 'discount'))||0;
+    const net   = parseFloat(rzGet(row, h, 'netsales'))||0;
+    const total = parseFloat(rzGet(row, h, 'totalsales'))||0;
+    const type  = rzGet(row, h, 'pricingtype');
+
+    if (!plan || qty===0) { skipped++; return; }
+    if (sales.some(s=>s.rezervPlan===plan && s.date===today)) { skipped++; return; }
+
+    sales.unshift({id:Date.now()+ri, date:today, type:'New Sale',
+      client:qty+'x '+plan, package:mapRezervPackage(plan), amount:total,
+      gross, discount:disc, net, by:'Rezerv Import',
+      notes:type+' · '+qty+' sold · Gross: ₱'+gross.toLocaleString()+' · Disc: ₱'+disc.toLocaleString(),
+      rezervPlan:plan, importedRezervCSV:true});
+    imported++;
+  });
+
+  save('sales', sales);
+  return {icon:'💰', type:'Sales by Pricing Plan → Sales tab',
+    html:`💰 ${imported} sales records imported<br>⏭ ${skipped} skipped`};
+}
+
+function rzImportByPackage(rows, h) {
+  let count=0;
+  const lines = [];
+  rows.forEach(rowStr => {
+    const row = parseCSVRow(rowStr);
+    const pkg = rzGet(row, h, 'package');
+    const qty = parseInt(rzGet(row, h, 'quantity'))||0;
+    const total = parseFloat(rzGet(row, h, 'recognised_totalsales'))||0;
+    if (pkg && qty>0 && !rzGet(row,h,'iscategory').toLowerCase().includes('true')) {
+      lines.push(pkg+': '+qty+'x · ₱'+Math.round(total).toLocaleString());
+      count++;
+    }
+  });
+  return {icon:'📦', type:'Sales by Package → Reference only',
+    html:'📦 '+count+' packages:<br><span style="font-size:11px;color:var(--muted);">'+lines.join('<br>')+'</span>'};
+}
+
+function rzImportOvertime(rows, h) {
+  const expenses = load('expenses');
+  let imported=0, skipped=0;
+
+  rows.forEach((rowStr, ri) => {
+    const row = parseCSVRow(rowStr);
+    const rawDate = rzGet(row, h, 'datetime');
+    const date    = parseRezervDate(rawDate);
+    const total   = parseFloat(rzGet(row, h, 'recognised_totalsales'))||0;
+    const net     = parseFloat(rzGet(row, h, 'recognised_netsales'))||0;
+    const disc    = parseFloat(rzGet(row, h, 'recognised_discount'))||0;
+    const qty     = parseInt(rzGet(row, h, 'recognisedtotalquantity'))||0;
+
+    if (!date || total===0) { skipped++; return; }
+    if (expenses.some(e=>e.rezervDate===date && e.category==='Rezerv Revenue')) { skipped++; return; }
+
+    expenses.unshift({id:Date.now()+ri, date, category:'Rezerv Revenue',
+      description:qty+' bookings · Net: ₱'+Math.round(net).toLocaleString()+' · Disc: ₱'+Math.round(disc).toLocaleString(),
+      amount:total, type:'revenue', rezervDate:date, importedRezervCSV:true});
+    imported++;
+  });
+
+  save('expenses', expenses);
+  return {icon:'📈', type:'Sales over Time → P&L / Expenses',
+    html:`📈 ${imported} daily revenue records<br>⏭ ${skipped} skipped (zero or duplicate)`};
+}
+
+
 function saveSession() {
   const member   = document.getElementById('s_member').value.trim();
   const date     = document.getElementById('s_date').value;
@@ -3961,214 +4208,6 @@ function parseCSVRow(row) {
   return result;
 }
 
-// ── REZERV CSV IMPORTER ────────────────────────────────────────────
-// Maps Rezerv attendance export to TGS dashboard format
-function importRezervCSV(input) {
-  const file = input.files[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = e => {
-    const lines = e.target.result.split('\n').filter(l => l.trim());
-    const rawHeader = parseCSVRow(lines[0]);
-    const header = rawHeader.map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g,'_'));
-
-    const rows = lines.slice(1);
-    const sessions = load('sessions');
-    const leads    = load('leads');
-    const members  = load('members');
-
-    let imported = 0, memberCreated = 0, leadCreated = 0, deducted = 0, skipped = 0, errors = [];
-
-    // Column index finder
-    const idx = key => {
-      const map = {
-        'date':        ['date_of_service'],
-        'time':        ['start_time'],
-        'customer':    ['customer'],
-        'staff':       ['staff'],
-        'status':      ['status'],
-        'service':     ['service_name'],
-        'category':    ['category'],
-        'payment':     ['payment'],
-        'mobile':      ['mobile_number'],
-        'email':       ['email_address'],
-        'revenue':     ['revenue_per_booking'],
-        'booking_ref': ['booking_ref_no_'],
-        'total_slots': ['total_slots'],
-        'credit_used': ['credit_used'],
-      };
-      const aliases = map[key] || [key];
-      for (const a of aliases) {
-        const i = header.indexOf(a);
-        if (i !== -1) return i;
-      }
-      return -1;
-    };
-
-    // Parse DD/MM/YY → YYYY-MM-DD
-    function parseRezervDate(d) {
-      if (!d) return '';
-      const parts = d.trim().split('/');
-      if (parts.length === 3) {
-        const [day, mon, yr] = parts;
-        const year = yr.length === 2 ? '20' + yr : yr;
-        return `${year}-${mon.padStart(2,'0')}-${day.padStart(2,'0')}`;
-      }
-      return d;
-    }
-
-    // Clean staff name
-    function cleanStaff(s) {
-      if (!s || s.trim() === '' || s.trim() === '-') return '';
-      return s.replace('Coach ', '').replace('True Grit Admin', 'Admin').trim();
-    }
-
-    // Map payment plan to TGS package name
-    function mapPackage(payment) {
-      const map = {
-        'grind': 'Grind — 8 Sessions', 'resolve': 'Resolve — 12 Sessions',
-        'intense': 'Intense — 24 Sessions', 'transform': 'Transform — 36 Sessions',
-        'drop-in': 'Single Session', 'drop_in': 'Single Session',
-        'free': 'Complimentary', 'trial': 'Trial Session'
-      };
-      return map[(payment||'').toLowerCase().replace(/[\s-]/g,'_')] || payment || '';
-    }
-
-    // Map service category
-    function mapCategory(service, category) {
-      const s = (service||'').toLowerCase();
-      const c = (category||'').toLowerCase();
-      if (s.includes('personal training') || s.includes('1 hour')) return 'Training';
-      if (s.includes('studio tour') || c.includes('day pass')) return 'Walk-in';
-      if (s.includes('trial') || s.includes('assessment')) return 'Trial';
-      if (s.includes('class') || s.includes('group')) return 'Group Class';
-      return 'Training';
-    }
-
-    rows.forEach((row, ri) => {
-      try {
-        const vals = parseCSVRow(row);
-        const get = key => (vals[idx(key)] || '').trim().replace(/^"|"$/g, '');
-
-        const customer = get('customer');
-        const status   = get('status');
-        const rawDate  = get('date');
-
-        // Skip walk-in customers and empty rows
-        if (!customer || customer.toLowerCase() === 'walk-in customer' || !rawDate) {
-          skipped++; return;
-        }
-
-        const date     = parseRezervDate(rawDate);
-        const time     = get('time');
-        const staff    = cleanStaff(get('staff'));
-        const service  = get('service');
-        const category = mapCategory(service, get('category'));
-        const payment  = get('payment');
-        const mobile   = get('mobile').replace(/^-$/, '');
-        const email    = get('email').replace(/^-$/, '');
-        const revenue  = parseFloat(get('revenue')) || 0;
-        const bookingRef = get('booking_ref');
-
-        // Skip duplicates by booking ref
-        if (bookingRef && sessions.some(s => s.bookingRef === bookingRef)) {
-          skipped++; return;
-        }
-
-        // Map status
-        const statusMap = { 'completed': 'Completed', 'no show': 'No Show', 'cancelled': 'Cancelled', 'pending': 'Pending' };
-        const tgsStatus = statusMap[(status||'').toLowerCase()] || status;
-
-        // Create session record
-        const session = {
-          id: Date.now() + ri,
-          date, time,
-          member: customer,
-          trainer: staff,
-          category,
-          type: service || 'Personal Training',
-          status: tgsStatus,
-          notes: `Imported from Rezerv${bookingRef ? ' — Ref: ' + bookingRef : ''}`,
-          bookingRef,
-          package: mapPackage(payment),
-          revenue,
-          importedRezervCSV: true
-        };
-        sessions.unshift(session);
-        imported++;
-
-        // Auto-deduct from trainer clients if completed training
-        if (category === 'Training' && tgsStatus === 'Completed') {
-          if (autoDeductSession(customer, staff, date)) deducted++;
-        }
-
-        // Auto-create member if not exists
-        if (mobile || email) {
-          const memberExists = members.some(m => m.name?.toLowerCase() === customer.toLowerCase());
-          if (!memberExists) {
-            members.push({
-              id: Date.now() + ri + 50000,
-              name: customer,
-              contact: mobile || '',
-              email: email || '',
-              package: mapPackage(payment),
-              trainer: staff,
-              start: date,
-              status: 'Active',
-              goal: 'Corrective Exercise',
-              notes: `Auto-created from Rezerv import`
-            });
-            memberCreated++;
-          }
-        }
-
-        // Auto-create lead for walk-ins and trials
-        if (category === 'Walk-in' || category === 'Trial') {
-          const leadExists = leads.some(l => l.name?.toLowerCase() === customer.toLowerCase());
-          if (!leadExists) {
-            leads.unshift({
-              id: Date.now() + ri + 20000,
-              date, name: customer,
-              type: category === 'Trial' ? 'Trial Session' : 'Visit / Walk-in',
-              source: 'Rezerv Import',
-              contact: mobile || '',
-              assigned: staff,
-              status: 'New',
-              interest: service || '',
-              notes: `Imported from Rezerv — ${date}`
-            });
-            leadCreated++;
-          }
-        }
-
-      } catch(err) { errors.push(`Row ${ri+2}: ${err.message}`); }
-    });
-
-    save('sessions', sessions);
-    save('leads', leads);
-    if (memberCreated > 0) save('members', members);
-
-    // Show result
-    const resultEl = document.getElementById('sessionImportResult');
-    if (resultEl) {
-      resultEl.style.display = 'block';
-      resultEl.innerHTML = `<div style="background:rgba(201,168,76,0.06);border:1px solid rgba(201,168,76,0.25);border-radius:8px;padding:14px 16px;font-size:12px;">
-        <div style="font-weight:700;color:var(--gold);margin-bottom:8px;">✓ Rezerv Import Complete</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
-          <div>📋 ${imported} sessions imported</div>
-          <div>⏭ ${skipped} skipped (walk-ins/duplicates)</div>
-          <div>📉 ${deducted} sessions auto-deducted</div>
-          <div>👥 ${memberCreated} new members created</div>
-          <div>📊 ${leadCreated} new leads created</div>
-          ${errors.length ? `<div style="color:#c07070;grid-column:span 2;">⚠ ${errors.length} error(s): ${errors.slice(0,3).join('; ')}</div>` : ''}
-        </div>
-      </div>`;
-    }
-    input.value = '';
-    renderAll();
-    toast(`✓ Rezerv: ${imported} sessions · ${memberCreated} members · ${leadCreated} leads`);
-  };
-  reader.readAsText(file);
-}
 
 function saveSession() {
   const member   = document.getElementById('s_member').value.trim();
