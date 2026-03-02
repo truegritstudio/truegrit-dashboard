@@ -2606,6 +2606,21 @@ async function initCloudSync() {
       anyLoaded = true;
     }
   }
+  // Load trainer_clients and trainer_leaves from tgs_settings table
+  const settingsKeys = ['trainer_clients', 'trainer_leaves', 'trainers'];
+  for (const key of settingsKeys) {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/tgs_settings?key=eq.${key}&select=value`, {
+        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+      });
+      const rows = await res.json();
+      if (rows && rows.length > 0 && rows[0].value) {
+        const storageKey = key === 'trainer_clients' ? 'tgs_trainer_clients' : key === 'trainer_leaves' ? 'tgs_trainer_leaves' : 'tgs_trainers';
+        localStorage.setItem(storageKey, JSON.stringify(rows[0].value));
+        anyLoaded = true;
+      }
+    } catch(e) { console.warn('Settings load error:', e); }
+  }
   if (anyLoaded) {
     updateSyncBadge('ok');
     renderAll();
@@ -4087,7 +4102,20 @@ function loadTrainers() {
   }
   return data;
 }
-function saveTrainers(d) { localStorage.setItem('tgs_trainers', JSON.stringify(d)); }
+function saveTrainers(d) {
+  localStorage.setItem('tgs_trainers', JSON.stringify(d));
+  if (_cloudEnabled) {
+    updateSyncBadge('syncing');
+    fetch(`${SUPABASE_URL}/rest/v1/tgs_settings?key=eq.trainers`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    }).then(() => fetch(`${SUPABASE_URL}/rest/v1/tgs_settings`, {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'trainers', value: d })
+    })).then(() => updateSyncBadge('ok')).catch(() => updateSyncBadge('error'));
+  }
+}
 
 // Returns only Active trainer names for use in <select> dropdowns
 function trainerOptions(selectedVal) {
@@ -5411,7 +5439,21 @@ async function syncAllToSheets(silent = false) {
 function loadTrainerClients() {
   try { return JSON.parse(localStorage.getItem('tgs_trainer_clients') || '{}'); } catch { return {}; }
 }
-function saveTrainerClients(d) { localStorage.setItem('tgs_trainer_clients', JSON.stringify(d)); }
+function saveTrainerClients(d) {
+  localStorage.setItem('tgs_trainer_clients', JSON.stringify(d));
+  // Sync to Supabase as a single settings row
+  if (_cloudEnabled) {
+    updateSyncBadge('syncing');
+    fetch(`${SUPABASE_URL}/rest/v1/tgs_settings?key=eq.trainer_clients`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    }).then(() => fetch(`${SUPABASE_URL}/rest/v1/tgs_settings`, {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'trainer_clients', value: d })
+    })).then(() => updateSyncBadge('ok')).catch(() => updateSyncBadge('error'));
+  }
+}
 
 function getTrainerClients(trainerId) {
   return (loadTrainerClients()[trainerId] || []);
@@ -6150,7 +6192,20 @@ function toggleMedicalField() {
 // ============================
 // tgs_trainer_leaves = { [trainerId]: [{id, type, from, to, reason, status, filed}] }
 function loadTrainerLeaves() { try { return JSON.parse(localStorage.getItem('tgs_trainer_leaves') || '{}'); } catch { return {}; } }
-function saveTrainerLeaves(d) { localStorage.setItem('tgs_trainer_leaves', JSON.stringify(d)); }
+function saveTrainerLeaves(d) {
+  localStorage.setItem('tgs_trainer_leaves', JSON.stringify(d));
+  if (_cloudEnabled) {
+    updateSyncBadge('syncing');
+    fetch(`${SUPABASE_URL}/rest/v1/tgs_settings?key=eq.trainer_leaves`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+    }).then(() => fetch(`${SUPABASE_URL}/rest/v1/tgs_settings`, {
+      method: 'POST',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'trainer_leaves', value: d })
+    })).then(() => updateSyncBadge('ok')).catch(() => updateSyncBadge('error'));
+  }
+}
 
 let _leavingTrainerId = null;
 
