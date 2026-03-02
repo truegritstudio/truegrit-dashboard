@@ -738,6 +738,10 @@
           <span class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:5px;">📂 Upload CSV</span>
           <input type="file" accept=".csv" onchange="importSessionsCSV(this)" style="display:none;">
         </label>
+        <label style="cursor:pointer;" title="Import Rezerv attendance export CSV">
+          <span class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:5px;color:var(--gold);border-color:rgba(201,168,76,0.4);">📥 Import Rezerv CSV</span>
+          <input type="file" accept=".csv" onchange="importRezervCSV(this)" style="display:none;">
+        </label>
         <button class="btn btn-outline btn-sm" onclick="downloadSessionTemplate()">↓ Template</button>
         <button class="btn admin-reset-btn" onclick="openResetModal()" style="display:none;background:rgba(192,112,112,0.08);border:1px solid rgba(192,112,112,0.25);color:#c07070;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:600;cursor:pointer;">⚠ Reset</button>
         <button class="btn btn-gold btn-sm" onclick="openSessionModal()">+ Log Session</button>
@@ -3955,6 +3959,215 @@ function parseCSVRow(row) {
   }
   result.push(current);
   return result;
+}
+
+// ── REZERV CSV IMPORTER ────────────────────────────────────────────
+// Maps Rezerv attendance export to TGS dashboard format
+function importRezervCSV(input) {
+  const file = input.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const lines = e.target.result.split('\n').filter(l => l.trim());
+    const rawHeader = parseCSVRow(lines[0]);
+    const header = rawHeader.map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g,'_'));
+
+    const rows = lines.slice(1);
+    const sessions = load('sessions');
+    const leads    = load('leads');
+    const members  = load('members');
+
+    let imported = 0, memberCreated = 0, leadCreated = 0, deducted = 0, skipped = 0, errors = [];
+
+    // Column index finder
+    const idx = key => {
+      const map = {
+        'date':        ['date_of_service'],
+        'time':        ['start_time'],
+        'customer':    ['customer'],
+        'staff':       ['staff'],
+        'status':      ['status'],
+        'service':     ['service_name'],
+        'category':    ['category'],
+        'payment':     ['payment'],
+        'mobile':      ['mobile_number'],
+        'email':       ['email_address'],
+        'revenue':     ['revenue_per_booking'],
+        'booking_ref': ['booking_ref_no_'],
+        'total_slots': ['total_slots'],
+        'credit_used': ['credit_used'],
+      };
+      const aliases = map[key] || [key];
+      for (const a of aliases) {
+        const i = header.indexOf(a);
+        if (i !== -1) return i;
+      }
+      return -1;
+    };
+
+    // Parse DD/MM/YY → YYYY-MM-DD
+    function parseRezervDate(d) {
+      if (!d) return '';
+      const parts = d.trim().split('/');
+      if (parts.length === 3) {
+        const [day, mon, yr] = parts;
+        const year = yr.length === 2 ? '20' + yr : yr;
+        return `${year}-${mon.padStart(2,'0')}-${day.padStart(2,'0')}`;
+      }
+      return d;
+    }
+
+    // Clean staff name
+    function cleanStaff(s) {
+      if (!s || s.trim() === '' || s.trim() === '-') return '';
+      return s.replace('Coach ', '').replace('True Grit Admin', 'Admin').trim();
+    }
+
+    // Map payment plan to TGS package name
+    function mapPackage(payment) {
+      const map = {
+        'grind': 'Grind — 8 Sessions', 'resolve': 'Resolve — 12 Sessions',
+        'intense': 'Intense — 24 Sessions', 'transform': 'Transform — 36 Sessions',
+        'drop-in': 'Single Session', 'drop_in': 'Single Session',
+        'free': 'Complimentary', 'trial': 'Trial Session'
+      };
+      return map[(payment||'').toLowerCase().replace(/[\s-]/g,'_')] || payment || '';
+    }
+
+    // Map service category
+    function mapCategory(service, category) {
+      const s = (service||'').toLowerCase();
+      const c = (category||'').toLowerCase();
+      if (s.includes('personal training') || s.includes('1 hour')) return 'Training';
+      if (s.includes('studio tour') || c.includes('day pass')) return 'Walk-in';
+      if (s.includes('trial') || s.includes('assessment')) return 'Trial';
+      if (s.includes('class') || s.includes('group')) return 'Group Class';
+      return 'Training';
+    }
+
+    rows.forEach((row, ri) => {
+      try {
+        const vals = parseCSVRow(row);
+        const get = key => (vals[idx(key)] || '').trim().replace(/^"|"$/g, '');
+
+        const customer = get('customer');
+        const status   = get('status');
+        const rawDate  = get('date');
+
+        // Skip walk-in customers and empty rows
+        if (!customer || customer.toLowerCase() === 'walk-in customer' || !rawDate) {
+          skipped++; return;
+        }
+
+        const date     = parseRezervDate(rawDate);
+        const time     = get('time');
+        const staff    = cleanStaff(get('staff'));
+        const service  = get('service');
+        const category = mapCategory(service, get('category'));
+        const payment  = get('payment');
+        const mobile   = get('mobile').replace(/^-$/, '');
+        const email    = get('email').replace(/^-$/, '');
+        const revenue  = parseFloat(get('revenue')) || 0;
+        const bookingRef = get('booking_ref');
+
+        // Skip duplicates by booking ref
+        if (bookingRef && sessions.some(s => s.bookingRef === bookingRef)) {
+          skipped++; return;
+        }
+
+        // Map status
+        const statusMap = { 'completed': 'Completed', 'no show': 'No Show', 'cancelled': 'Cancelled', 'pending': 'Pending' };
+        const tgsStatus = statusMap[(status||'').toLowerCase()] || status;
+
+        // Create session record
+        const session = {
+          id: Date.now() + ri,
+          date, time,
+          member: customer,
+          trainer: staff,
+          category,
+          type: service || 'Personal Training',
+          status: tgsStatus,
+          notes: `Imported from Rezerv${bookingRef ? ' — Ref: ' + bookingRef : ''}`,
+          bookingRef,
+          package: mapPackage(payment),
+          revenue,
+          importedRezervCSV: true
+        };
+        sessions.unshift(session);
+        imported++;
+
+        // Auto-deduct from trainer clients if completed training
+        if (category === 'Training' && tgsStatus === 'Completed') {
+          if (autoDeductSession(customer, staff, date)) deducted++;
+        }
+
+        // Auto-create member if not exists
+        if (mobile || email) {
+          const memberExists = members.some(m => m.name?.toLowerCase() === customer.toLowerCase());
+          if (!memberExists) {
+            members.push({
+              id: Date.now() + ri + 50000,
+              name: customer,
+              contact: mobile || '',
+              email: email || '',
+              package: mapPackage(payment),
+              trainer: staff,
+              start: date,
+              status: 'Active',
+              goal: 'Corrective Exercise',
+              notes: `Auto-created from Rezerv import`
+            });
+            memberCreated++;
+          }
+        }
+
+        // Auto-create lead for walk-ins and trials
+        if (category === 'Walk-in' || category === 'Trial') {
+          const leadExists = leads.some(l => l.name?.toLowerCase() === customer.toLowerCase());
+          if (!leadExists) {
+            leads.unshift({
+              id: Date.now() + ri + 20000,
+              date, name: customer,
+              type: category === 'Trial' ? 'Trial Session' : 'Visit / Walk-in',
+              source: 'Rezerv Import',
+              contact: mobile || '',
+              assigned: staff,
+              status: 'New',
+              interest: service || '',
+              notes: `Imported from Rezerv — ${date}`
+            });
+            leadCreated++;
+          }
+        }
+
+      } catch(err) { errors.push(`Row ${ri+2}: ${err.message}`); }
+    });
+
+    save('sessions', sessions);
+    save('leads', leads);
+    if (memberCreated > 0) save('members', members);
+
+    // Show result
+    const resultEl = document.getElementById('sessionImportResult');
+    if (resultEl) {
+      resultEl.style.display = 'block';
+      resultEl.innerHTML = `<div style="background:rgba(201,168,76,0.06);border:1px solid rgba(201,168,76,0.25);border-radius:8px;padding:14px 16px;font-size:12px;">
+        <div style="font-weight:700;color:var(--gold);margin-bottom:8px;">✓ Rezerv Import Complete</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
+          <div>📋 ${imported} sessions imported</div>
+          <div>⏭ ${skipped} skipped (walk-ins/duplicates)</div>
+          <div>📉 ${deducted} sessions auto-deducted</div>
+          <div>👥 ${memberCreated} new members created</div>
+          <div>📊 ${leadCreated} new leads created</div>
+          ${errors.length ? `<div style="color:#c07070;grid-column:span 2;">⚠ ${errors.length} error(s): ${errors.slice(0,3).join('; ')}</div>` : ''}
+        </div>
+      </div>`;
+    }
+    input.value = '';
+    renderAll();
+    toast(`✓ Rezerv: ${imported} sessions · ${memberCreated} members · ${leadCreated} leads`);
+  };
+  reader.readAsText(file);
 }
 
 function saveSession() {
