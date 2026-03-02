@@ -619,6 +619,8 @@
       </button>
       <button class="btn btn-outline btn-sm" onclick="openBackupModal()" title="Auto Backup">☁ Backup</button>
       <button class="btn btn-outline btn-sm" onclick="exportData()">↓ Export CSV</button>
+      <!-- Cloud sync status badge -->
+      <span id="syncStatusBadge" style="font-size:10px;font-weight:700;border:1px solid transparent;border-radius:6px;padding:3px 8px;"></span>
       <button class="btn btn-gold btn-sm" onclick="openAddModal()">+ Add Entry</button>
     </div>
   </div>
@@ -2574,13 +2576,123 @@
   console.log('✓ Rezerv v3: 10 members, 14 leads, 11 sales (1 renewal), packages reset to TGS price list.');
 })();
 
+// ============================
+// SUPABASE CLOUD SYNC
+// ============================
+const SUPABASE_URL = 'https://kjdxpkisrmdsoinriagi.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtqZHhwa2lzcm1kc29pbnJpYWdpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0MzYzMDAsImV4cCI6MjA4ODAxMjMwMH0.1Rf3ay9hiFEgpBGFCwVU1YVPqWQ5drb5d6ZkDNCjpdM';
+
+const SUPABASE_TABLES = {
+  members: 'tgs_members', sessions: 'tgs_sessions', leads: 'tgs_leads',
+  sales: 'tgs_sales', sat: 'tgs_sat', log: 'tgs_log',
+  expenses: 'tgs_expenses', trainer_clients: 'tgs_trainer_clients'
+};
+
 const KEYS = { members:'tgs_members', sessions:'tgs_sessions', leads:'tgs_leads', sales:'tgs_sales', sat:'tgs_sat', log:'tgs_log' };
 
-function load(key) {
-  try { return JSON.parse(localStorage.getItem(KEYS[key]) || '[]'); } catch { return []; }
+// In-memory cache for instant UI response
+const _cache = {};
+let _cloudEnabled = true;
+let _syncStatus = 'idle'; // idle | syncing | error | ok
+
+async function sbFetch(table, method, body) {
+  const url = `${SUPABASE_URL}/rest/v1/${table}`;
+  const headers = {
+    'apikey': SUPABASE_KEY,
+    'Authorization': `Bearer ${SUPABASE_KEY}`,
+    'Content-Type': 'application/json',
+    'Prefer': method === 'POST' ? 'return=representation' : ''
+  };
+  try {
+    const res = await fetch(method === 'GET' ? url + '?select=*&order=id.asc' : url, {
+      method, headers, body: body ? JSON.stringify(body) : undefined
+    });
+    if (!res.ok) throw new Error(await res.text());
+    return method === 'DELETE' ? [] : await res.json();
+  } catch(e) {
+    console.warn('Supabase error:', e.message);
+    _cloudEnabled = false;
+    updateSyncBadge('error');
+    return null;
+  }
 }
+
+// Load from Supabase — returns array of records
+async function loadCloud(key) {
+  const table = SUPABASE_TABLES[key] || ('tgs_' + key);
+  const rows = await sbFetch(table, 'GET');
+  if (!rows) return null;
+  return rows.map(r => ({ ...r.data, _rowid: r.id }));
+}
+
+// Save entire dataset to Supabase (delete all + insert fresh)
+async function saveCloud(key, data) {
+  const table = SUPABASE_TABLES[key] || ('tgs_' + key);
+  // Delete all existing rows
+  await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=gte.0`, {
+    method: 'DELETE',
+    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
+  });
+  if (!data.length) return;
+  // Insert all rows
+  const rows = data.map(item => ({ data: item, branch_id: 'main' }));
+  await sbFetch(table, 'POST', rows);
+}
+
+function updateSyncBadge(status) {
+  _syncStatus = status;
+  let badge = document.getElementById('syncStatusBadge');
+  if (!badge) return;
+  const styles = {
+    syncing: 'color:#7aaac8;background:rgba(122,170,200,0.1);border-color:rgba(122,170,200,0.3);',
+    ok:      'color:#6ab87a;background:rgba(106,184,122,0.1);border-color:rgba(106,184,122,0.3);',
+    error:   'color:#c07070;background:rgba(192,112,112,0.1);border-color:rgba(192,112,112,0.3);',
+    idle:    'color:var(--muted);background:transparent;border-color:transparent;'
+  };
+  badge.style.cssText = `font-size:10px;font-weight:700;border:1px solid;border-radius:6px;padding:3px 8px;transition:all 0.3s;${styles[status]||styles.idle}`;
+  badge.textContent = { syncing:'⟳ Syncing...', ok:'☁ Synced', error:'⚠ Offline', idle:'' }[status] || '';
+}
+
+// ── Main load/save (with cloud sync + local fallback) ──────────────
+function load(key) {
+  if (_cache[key]) return _cache[key];
+  try { 
+    const local = JSON.parse(localStorage.getItem(KEYS[key] || ('tgs_' + key)) || '[]');
+    _cache[key] = local;
+    return local;
+  } catch { return []; }
+}
+
 function save(key, data) {
-  localStorage.setItem(KEYS[key], JSON.stringify(data));
+  _cache[key] = data;
+  localStorage.setItem(KEYS[key] || ('tgs_' + key), JSON.stringify(data));
+  // Async cloud sync (non-blocking)
+  if (_cloudEnabled) {
+    updateSyncBadge('syncing');
+    saveCloud(key, data).then(() => updateSyncBadge('ok')).catch(() => updateSyncBadge('error'));
+  }
+}
+
+// ── Initial cloud load on startup ──────────────────────────────────
+async function initCloudSync() {
+  updateSyncBadge('syncing');
+  let anyLoaded = false;
+  const keys = ['members','sessions','leads','sales','sat','log','expenses'];
+  for (const key of keys) {
+    const cloudData = await loadCloud(key);
+    if (cloudData && cloudData.length > 0) {
+      _cache[key] = cloudData;
+      localStorage.setItem(KEYS[key] || ('tgs_' + key), JSON.stringify(cloudData));
+      anyLoaded = true;
+    }
+  }
+  if (anyLoaded) {
+    updateSyncBadge('ok');
+    renderAll();
+    toast('☁ Data loaded from cloud');
+  } else {
+    updateSyncBadge(_cloudEnabled ? 'ok' : 'error');
+  }
 }
 
 // Seed sample data if empty
@@ -7105,6 +7217,9 @@ document.querySelectorAll('.overlay').forEach(o => {
 
 // Initialize branch system
 applyBranchToUI();
+
+// Initialize Supabase cloud sync
+initCloudSync();
 
 // Set current month/year on Finance page
 (function() {
