@@ -4076,20 +4076,36 @@ function rzGet(row, headers, keyword) {
 function parseRezervDate(d) {
   if (!d) return '';
   const s = d.trim().split(' ')[0];
-  // ISO already: 2025-12-22
+
+  // ── ISO format: 2025-12-22 ──
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  // 2026-Jan-01
+
+  // ── Month-name format: 2026-Jan-01 ──
   if (/^\d{4}-[A-Za-z]{3}-\d{2}$/.test(s)) {
     const mo = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
     const p = s.split('-');
     return `${p[0]}-${mo[p[1]]||'01'}-${p[2].padStart(2,'0')}`;
   }
-  // DD/MM/YY or DD/MM/YYYY
+
+  // ── Slash-separated: detect MM/DD/YYYY vs DD/MM/YYYY ──
+  // Rezerv exports as MM/DD/YYYY (US format) e.g. "12/21/2025"
   const parts = s.split('/');
   if (parts.length === 3) {
     let [a, b, c] = parts;
     const year = c.length === 2 ? '20' + c : c;
-    return year + '-' + b.padStart(2,'0') + '-' + a.padStart(2,'0');
+    const numA = parseInt(a, 10);
+    const numB = parseInt(b, 10);
+
+    // If first part > 12, it MUST be a day → DD/MM/YYYY
+    if (numA > 12) {
+      return year + '-' + b.padStart(2,'0') + '-' + a.padStart(2,'0');
+    }
+    // If second part > 12, it MUST be a day → MM/DD/YYYY (Rezerv default)
+    if (numB > 12) {
+      return year + '-' + a.padStart(2,'0') + '-' + b.padStart(2,'0');
+    }
+    // Both ≤ 12: ambiguous — Rezerv uses MM/DD/YYYY so treat first part as month
+    return year + '-' + a.padStart(2,'0') + '-' + b.padStart(2,'0');
   }
   return '';
 }
@@ -4262,7 +4278,7 @@ function rzImportTransactions(rows, h) {
     if (!client || client.toLowerCase().includes('test')) { countSkip++; return; }
 
     // Classify
-    const isFounding = promo === 'FOUNDING50';
+    const isFounding = promo === 'FOUNDING50' || promo === 'FOUNDING50RENEWAL';
     const isRenewal  = promo.includes('RENEWAL') ||
                        (!isFounding && existingClients.has(client.toLowerCase()) && paidAmt > 0);
     const saleType   = isFounding ? 'New Sale' : isRenewal ? 'Renewal' : 'New Sale';
