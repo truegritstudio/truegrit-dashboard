@@ -4170,7 +4170,7 @@ function rzImportTransactions(rows, h) {
   const sales    = load('sales');
   const sessions = load('sessions');
   const members  = load('members');
-  let importedSales=0, importedSessions=0, memberCreated=0, skipped=0;
+  let importedSales=0, importedSessions=0, memberCreated=0, skipped=0, foundingCount=0;
 
   // Flexible column finders — Rezerv export columns vary by account
   const col = (keywords) => {
@@ -4178,88 +4178,124 @@ function rzImportTransactions(rows, h) {
     return h.find(x => k.some(kw => x.includes(kw))) || null;
   };
 
-  const cDate     = col(['date','transaction_date','created','booking_date']);
-  const cClient   = col(['client','customer','member','name','first_name']);
-  const cService  = col(['service','package','plan','product','description']);
-  const cStaff    = col(['staff','trainer','coach','employee']);
-  const cGross    = col(['gross','gross_sale','total','amount','price']);
-  const cNet      = col(['net','net_sale','net_amount']);
-  const cDisc     = col(['discount','disc']);
-  const cStatus   = col(['status','booking_status','payment_status']);
-  const cRef      = col(['ref','reference','invoice','transaction_id','booking_ref']);
-  const cContact  = col(['mobile','phone','contact','email']);
+  const cDate      = col(['paid_on','paid on','transaction_date','created','booking_date','date']);
+  const cClient    = col(['customername','customer_name','client','member','name','first_name']);
+  const cService   = col(['linked_item','linked item','service','package','plan','product','description','item']);
+  const cItemType  = col(['item_type','item type','itemtype']);
+  const cStaff     = col(['sold_by','sold by','staff','trainer','coach','employee']);
+  const cPaidAmt   = col(['paid_amount','paid amount','paidamount']);           // Rezerv final paid
+  const cNetAmt    = col(['net_amount','net amount','netamount','net_sale']);
+  const cGrossAmt  = col(['amount']);                                            // pre-tax base amount
+  const cDisc      = col(['discount']);
+  const cTax       = col(['tax']);
+  const cStatus    = col(['status','booking_status','payment_status']);
+  const cRef       = col(['transactionid','transaction_id','transaction id','reference','invoice','booking_ref','ref']);
+  const cMobile    = col(['mobile','phone','contact']);
+  const cEmail     = col(['email']);
+  const cPromo     = col(['promo_code','promo code','promocode','voucher']);
 
   rows.forEach((rowStr, ri) => {
     if (!rowStr.trim()) return;
     const row = parseCSVRow(rowStr);
     const get = (c) => c !== null ? (row[h.indexOf(c)] || '').trim() : '';
 
-    const rawDate = get(cDate);
-    const date    = parseRezervDate(rawDate);
+    const rawDate  = get(cDate);
+    const date     = parseRezervDate(rawDate);
     if (!date) { skipped++; return; }
 
-    const client  = get(cClient);
-    const service = get(cService);
-    const staff   = cleanStaffName(get(cStaff));
-    const gross   = parseFloat(get(cGross).replace(/[₱,\s]/g,'')) || 0;
-    const net     = parseFloat(get(cNet).replace(/[₱,\s]/g,''))   || gross;
-    const disc    = parseFloat(get(cDisc).replace(/[₱,\s]/g,''))  || 0;
-    const status  = get(cStatus) || 'Completed';
-    const ref     = get(cRef);
-    const contact = get(cContact);
+    const client   = get(cClient);
+    const service  = get(cService);
+    const itemType = get(cItemType).toLowerCase();
+    const staff    = cleanStaffName(get(cStaff));
+    const promoCode = get(cPromo).toUpperCase();
+    const mobile   = get(cMobile).replace(/^-$/, '');
+    const email    = get(cEmail).replace(/^-$/, '');
+    const ref      = get(cRef);
+    const status   = get(cStatus) || 'Paid';
 
-    if (gross === 0 && !client) { skipped++; return; }
+    // Use Paid Amount as the canonical revenue figure (includes tax, what client actually paid)
+    const paidAmt  = parseFloat((get(cPaidAmt)||'0').replace(/[₱,\s]/g,'')) || 0;
+    const netAmt   = parseFloat((get(cNetAmt) ||'0').replace(/[₱,\s]/g,'')) || paidAmt;
+    const grossAmt = parseFloat((get(cGrossAmt)||'0').replace(/[₱,\s]/g,'')) || 0;
+    const disc     = parseFloat((get(cDisc)   ||'0').replace(/[₱,\s]/g,'')) || 0;
+    const tax      = parseFloat((get(cTax)    ||'0').replace(/[₱,\s]/g,'')) || 0;
 
-    // De-duplicate by ref or date+client+amount
-    const dupKey = ref || (date + '|' + client + '|' + gross);
-    if (sales.some(s => (s.bookingRef && s.bookingRef === ref) || s._txKey === dupKey)) { skipped++; return; }
+    // Skip zero-revenue AND no client (Studio Tour walk-ins, test entries)
+    if (paidAmt === 0 && (!client || client.toLowerCase() === 'test 1')) { skipped++; return; }
+
+    // De-duplicate by TransactionID
+    const dupKey = ref || (date + '|' + client + '|' + paidAmt);
+    if (sales.some(s => (s.bookingRef && s.bookingRef === ref && ref) || s._txKey === dupKey)) { skipped++; return; }
+
+    // Founding member detection
+    const isFoundingOriginal = promoCode === 'FOUNDING50';
+    const isFoundingRenewal  = promoCode === 'FOUNDING50RENEWAL';
+    const foundingFlag = (isFoundingOriginal || isFoundingRenewal)
+      ? 'Yes — Founding Member' : 'No';
+    if (isFoundingOriginal) foundingCount++;
+
+    // Package type detection
+    const svcLower = service.toLowerCase();
+    const isPackage = itemType === 'package' || ['grind','resolve','intense','transform','true start','true form','true force'].some(p => svcLower.includes(p));
+    const isTrial   = svcLower.includes('trial');
+    const isTour    = svcLower.includes('studio tour') || svcLower.includes('tour');
+    const isClass   = itemType === 'class' || svcLower.includes('class') || svcLower.includes('group');
 
     sales.unshift({
       id: Date.now() + ri,
-      date, client: client || 'Walk-in',
+      date,
+      client: client || 'Walk-in',
       package: mapRezervPackage(service),
-      amount: gross, gross, discount: disc, net,
+      amount: paidAmt,          // what client paid (with tax)
+      gross: grossAmt || paidAmt,
+      discount: disc,
+      tax: tax,
+      net: netAmt,
       by: staff || 'Rezerv',
-      status: status.toLowerCase().includes('cancel') ? 'Cancelled' :
-              status.toLowerCase().includes('refund') ? 'Refunded' : 'Completed',
-      notes: 'Rezerv Transactions' + (ref ? ' · ' + ref : ''),
+      status: status.toLowerCase().includes('cancel') ? 'Cancelled'
+            : status.toLowerCase().includes('refund') ? 'Refunded' : 'Completed',
+      promoCode: promoCode || null,
+      founding: foundingFlag,
+      notes: 'Rezerv' + (promoCode ? ' · ' + promoCode : '') + (ref ? ' · ' + ref : ''),
       bookingRef: ref || null,
       _txKey: dupKey,
       importedRezervCSV: true
     });
     importedSales++;
 
-    // Auto-create session record if it looks like a booking (not just a product sale)
-    if (client && service && !sessions.some(s => s.bookingRef === ref && ref)) {
-      const statusMap = {'completed':'Completed','no show':'No Show','cancelled':'Cancelled','no-show':'No Show'};
-      const sStatus = statusMap[status.toLowerCase()] || 'Completed';
+    // Auto-create member record (for packages — not tours/trials without client)
+    if (client && (mobile || email) && isPackage &&
+        !members.some(m => m.name?.toLowerCase() === client.toLowerCase())) {
+      members.push({
+        id: Date.now() + ri + 50000,
+        name: client,
+        contact: mobile,
+        email: email,
+        package: mapRezervPackage(service),
+        trainer: staff, start: date,
+        status: 'Active',
+        goal: 'Corrective Exercise',
+        founding: foundingFlag,
+        notes: 'Auto-created from Rezerv Transactions' + (promoCode ? ' · ' + promoCode : '')
+      });
+      memberCreated++;
+    }
+
+    // Auto-create session for class/trial bookings
+    if (client && (isClass || isTrial) &&
+        !sessions.some(s => s.bookingRef === ref && ref)) {
       sessions.unshift({
         id: Date.now() + ri + 10000, date,
         member: client, trainer: staff,
-        category: service.toLowerCase().includes('trial') ? 'Trial' :
-                  service.toLowerCase().includes('group') || service.toLowerCase().includes('class') ? 'Group Class' : 'Training',
+        category: isTrial ? 'Trial' : 'Group Class',
         type: service || 'Personal Training',
-        status: sStatus,
+        status: 'Completed',
         notes: 'Rezerv Transactions' + (ref ? ' · ' + ref : ''),
         bookingRef: ref || null,
-        revenue: gross,
+        revenue: paidAmt,
         importedRezervCSV: true
       });
       importedSessions++;
-    }
-
-    // Auto-create member if new
-    if (client && contact && !members.some(m => m.name?.toLowerCase() === client.toLowerCase())) {
-      members.push({
-        id: Date.now() + ri + 50000, name: client,
-        contact: contact.includes('@') ? '' : contact,
-        email: contact.includes('@') ? contact : '',
-        package: mapRezervPackage(service),
-        trainer: staff, start: date,
-        status: 'Active', goal: 'Corrective Exercise',
-        notes: 'Auto-created from Rezerv Transactions'
-      });
-      memberCreated++;
     }
   });
 
@@ -4269,10 +4305,17 @@ function rzImportTransactions(rows, h) {
 
   return {
     icon: '💳',
-    type: 'Transactions → Sales + Sessions + Members',
-    html: `💳 ${importedSales} sales records<br>📋 ${importedSessions} session records<br>👥 ${memberCreated} new members<br>⏭ ${skipped} skipped (zero or duplicate)`
+    type: 'Transactions → Sales + Members',
+    html: [
+      `💳 <strong>${importedSales}</strong> sales records imported`,
+      `⭐ <strong style="color:var(--gold);">${foundingCount}</strong> founding members detected`,
+      `👥 <strong>${memberCreated}</strong> new member profiles created`,
+      importedSessions > 0 ? `📋 <strong>${importedSessions}</strong> session records` : '',
+      `⏭ <strong>${skipped}</strong> skipped (zero-value, test entries, or duplicates)`
+    ].filter(Boolean).join('<br>')
   };
 }
+
 
 
 function saveSession() {
