@@ -3893,6 +3893,82 @@ function rzGet(row, headers, keyword) {
   return idx >= 0 ? (row[idx] || '').trim() : '';
 }
 
+// ── CSV row parser — handles quoted fields with commas inside ─────
+function parseCSVRow(rowStr) {
+  const result = [];
+  let cur = '', inQuote = false;
+  for (let i = 0; i < rowStr.length; i++) {
+    const ch = rowStr[i];
+    if (ch === '"') {
+      if (inQuote && rowStr[i+1] === '"') { cur += '"'; i++; }
+      else inQuote = !inQuote;
+    } else if (ch === ',' && !inQuote) {
+      result.push(cur.trim()); cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
+// ── Main entry point — called by file input onchange ──────────────
+function smartRezervImport(inputEl) {
+  const files = Array.from(inputEl.files);
+  if (!files.length) return;
+  inputEl.value = ''; // reset so same file can be re-imported
+
+  const resultsEl = document.getElementById('rezervImportResults');
+  resultsEl.innerHTML = '<div style="color:var(--muted);font-size:13px;">⟳ Processing...</div>';
+  openModal('modalRezervImport');
+
+  let allResults = [];
+  let processed = 0;
+
+  files.forEach(file => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const text = e.target.result;
+        const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+        const headerLine = lines[0];
+        const headers = parseCSVRow(headerLine).map(h => h.replace(/\uFEFF/g,'').trim());
+        const rows = lines.slice(1).filter(l => l.trim());
+
+        const type = detectRezervType(headers);
+        let result;
+
+        if      (type === 'attendance')     result = rzImportAttendance(rows, headers);
+        else if (type === 'transactions')   result = rzImportTransactions(rows, headers);
+        else if (type === 'customer_report')result = rzImportCustomerReport(rows, headers);
+        else if (type === 'class_attendance')result = rzImportClassAttendance(rows, headers);
+        else if (type === 'by_package')     result = rzImportByPackage(rows, headers);
+        else if (type === 'overtime')       result = rzImportOvertime(rows, headers);
+        else if (type === 'pricing_plan')   result = rzImportSalesByPlan(rows, headers);
+        else result = { icon: '❓', type: 'Unknown CSV format', html: 'Could not detect CSV type.<br>Headers: ' + headers.slice(0,5).join(', ') };
+
+        allResults.push({ file: file.name, ...result });
+      } catch(err) {
+        allResults.push({ file: file.name, icon: '❌', type: 'Error', html: 'Import failed: ' + err.message });
+      }
+
+      processed++;
+      if (processed === files.length) {
+        // All files done — render results
+        resultsEl.innerHTML = allResults.map(r => `
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
+            <div style="font-size:10px;color:var(--muted);margin-bottom:6px;font-family:'DM Mono',monospace;">${r.file}</div>
+            <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px;">${r.icon} ${r.type}</div>
+            <div style="font-size:13px;color:var(--cream);line-height:1.8;">${r.html}</div>
+          </div>`).join('');
+        clearCache();
+        renderAll();
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+
 function parseRezervDate(d) {
   if (!d) return '';
   const clean = d.trim().split(' ')[0];
@@ -3924,23 +4000,35 @@ function mapRezervPackage(p) {
 
 function detectRezervType(h) {
   const s = h.join('|').toLowerCase();
-  // attendance-with-revenue (most specific first)
-  if (s.includes('date_of_service') || s.includes('date of service') || 
-      (s.includes('booking_ref') && s.includes('revenue_per_booking'))) return 'attendance';
+
+  // ── 1. ATTENDANCE WITH REVENUE — check FIRST (has 'date of service' unique column) ──
+  if (s.includes('date of service') || s.includes('date_of_service')) return 'attendance';
+  if (s.includes('revenue per booking') || s.includes('revenue_per_booking')) return 'attendance';
+  if (s.includes('total transaction revenue') || s.includes('total_transaction_revenue')) return 'attendance';
+
+  // ── 2. CLASS ATTENDANCE SUMMARY — check before transactions ──
+  if ((s.includes('classname') || s.includes('class_name')) &&
+      (s.includes('capacity') || s.includes('noshow'))) return 'class_attendance';
+
+  // ── 3. TRANSACTIONS (success_transactions) ──
+  // Unique: TransactionID, Promo Code, Linked Item, Paid Amount, Item Type
+  if (s.includes('transactionid') || s.includes('transaction_id')) return 'transactions';
+  if (s.includes('linked item') || s.includes('linked_item')) return 'transactions';
+  if (s.includes('promo code') || s.includes('promo_code')) return 'transactions';
+  if (s.includes('paid amount') || s.includes('paid_amount')) return 'transactions';
+  if (s.includes('item type') || s.includes('item_type')) return 'transactions';
+
+  // ── 4. CUSTOMER REPORT ──
+  if ((s.includes('customername') || s.includes('customer_name')) &&
+      (s.includes('dateofbirth') || s.includes('date_of_birth') ||
+       s.includes('joineddate') || s.includes('joined_date') ||
+       s.includes('total booking') || s.includes('total_booking'))) return 'customer_report';
+
+  // ── 5. ANALYTICS FILES ──
   if (s.includes('pricingplan') || s.includes('pricing_plan')) return 'pricing_plan';
   if (s.includes('packageid') || (s.includes('package') && s.includes('recognised_grosssales'))) return 'by_package';
   if (s.includes('recognisedpackagequantity') || s.includes('recognised_totalquantity')) return 'overtime';
-  // customer_report - before class_attendance
-  if (s.includes('customername') && (s.includes('dateofbirth') || s.includes('joineddate') || s.includes('mobilecode'))) return 'customer_report';
-  // class_attendance summary
-  if ((s.includes('classname') || s.includes('class_name')) && s.includes('booked') && s.includes('completed')) return 'class_attendance';
-  if (s.includes('classid')) return 'by_class';
-  // success_transactions
-  if (s.includes('transactionid') || s.includes('transaction_id') ||
-      (s.includes('paid_on') || s.includes('paid on')) ||
-      s.includes('linked_item') || s.includes('linked item') ||
-      s.includes('promo_code') || s.includes('promo code') ||
-      (s.includes('discount') && s.includes('tax') && s.includes('amount'))) return 'transactions';
+
   return 'unknown';
 }
 
