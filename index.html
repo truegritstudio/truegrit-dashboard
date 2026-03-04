@@ -3959,6 +3959,10 @@ function detectRezervType(h) {
   if (s.includes('packageid') || (s.includes('package') && s.includes('recognised_grosssales'))) return 'by_package';
   if (s.includes('datetime') && s.includes('recognisedpackagequantity')) return 'overtime';
   if (s.includes('classid') || s.includes('classname')) return 'by_class';
+  // Customer report (CustomerName, MobileCode, Email, DateOfBirth, JoinedDate...)
+  if (s.includes('customername') && (s.includes('dateofbirth') || s.includes('joineddate') || s.includes('mobilecode'))) return 'customer_report';
+  // Class attendance summary (ClassName, Booked, Completed, NoShow...)
+  if (s.includes('classname') || (s.includes('booked') && s.includes('completed') && s.includes('noshow'))) return 'class_attendance';
   // Transactions / success_transactions export
   if (s.includes('transaction') || s.includes('invoice') ||
       (s.includes('amount') && (s.includes('client') || s.includes('customer') || s.includes('member'))) ||
@@ -3993,12 +3997,14 @@ async function smartRezervImport(input) {
     const dataRows = lines.slice(1);
     const ftype = detectRezervType(h);
     let res;
-    if (ftype === 'attendance')    res = rzImportAttendance(dataRows, h);
+    if (ftype === 'attendance')        res = rzImportAttendance(dataRows, h);
     else if (ftype === 'pricing_plan') res = rzImportSalesByPlan(dataRows, h);
     else if (ftype === 'by_package')   res = rzImportByPackage(dataRows, h);
     else if (ftype === 'overtime')     res = rzImportOvertime(dataRows, h);
     else if (ftype === 'transactions') res = rzImportTransactions(dataRows, h);
-    else if (ftype === 'by_class')     res = {icon:'📊', type:'Sales by Class', html:'Analytics file — no import needed'};
+    else if (ftype === 'customer_report') res = rzImportCustomerReport(dataRows, h);
+    else if (ftype === 'class_attendance') res = rzImportClassAttendance(dataRows, h);
+    else if (ftype === 'by_class')     res = {icon:'📊', type:'Sales by Class', html:'Analytics only — no records to import. Use for reference in Rezerv dashboard.'};
     else {
       debugRezervHeaders(h);
       res = {icon:'⚠️', type:'Unknown format', html:`File not recognized.<br><span style="font-size:10px;color:var(--muted);">Headers detected: <code style="background:rgba(201,168,76,0.1);padding:2px 4px;border-radius:3px;">${rawH.slice(0,6).join(', ')}</code><br>Screenshot this and send to your developer.</span>`};
@@ -4170,7 +4176,8 @@ function rzImportTransactions(rows, h) {
   const sales    = load('sales');
   const sessions = load('sessions');
   const members  = load('members');
-  let importedSales=0, importedSessions=0, memberCreated=0, skipped=0, foundingCount=0;
+  const leads    = load('leads');
+  let importedSales=0, importedSessions=0, memberCreated=0, leadCreated=0, skipped=0, foundingCount=0;
 
   // Flexible column finders — Rezerv export columns vary by account
   const col = (keywords) => {
@@ -4246,12 +4253,14 @@ function rzImportTransactions(rows, h) {
       date,
       client: client || 'Walk-in',
       package: mapRezervPackage(service),
-      amount: paidAmt,          // what client paid (with tax)
+      amount: paidAmt,
       gross: grossAmt || paidAmt,
       discount: disc,
       tax: tax,
       net: netAmt,
       by: staff || 'Rezerv',
+      // ★ type field — required for New Sales / Renewals KPI
+      type: (isFoundingRenewal || promoCode.includes('RENEWAL')) ? 'Renewal' : 'New Sale',
       status: status.toLowerCase().includes('cancel') ? 'Cancelled'
             : status.toLowerCase().includes('refund') ? 'Refunded' : 'Completed',
       promoCode: promoCode || null,
@@ -4297,26 +4306,157 @@ function rzImportTransactions(rows, h) {
       });
       importedSessions++;
     }
+
+    // Auto-create lead for Trials and Studio Tours (Walk-ins)
+    if (client && (isTrial || isTour) &&
+        !leads.some(l => l.name?.toLowerCase() === client.toLowerCase())) {
+      leads.unshift({
+        id: Date.now() + ri + 20000,
+        date, name: client,
+        type: isTrial ? 'Trial Session' : 'Visit / Walk-in',
+        source: 'Rezerv',
+        contact: mobile || email,
+        assigned: staff,
+        status: 'New',
+        notes: 'Rezerv Transactions' + (ref ? ' · ' + ref : '')
+      });
+      leadCreated++;
+    }
   });
 
   save('sales', sales);
   save('sessions', sessions);
+  save('leads', leads);
   if (memberCreated > 0) save('members', members);
 
   return {
     icon: '💳',
-    type: 'Transactions → Sales + Members',
+    type: 'Transactions → Sales + Members + Leads',
     html: [
       `💳 <strong>${importedSales}</strong> sales records imported`,
       `⭐ <strong style="color:var(--gold);">${foundingCount}</strong> founding members detected`,
       `👥 <strong>${memberCreated}</strong> new member profiles created`,
       importedSessions > 0 ? `📋 <strong>${importedSessions}</strong> session records` : '',
+      leadCreated > 0 ? `📊 <strong>${leadCreated}</strong> trial/walk-in leads` : '',
       `⏭ <strong>${skipped}</strong> skipped (zero-value, test entries, or duplicates)`
     ].filter(Boolean).join('<br>')
   };
 }
 
 
+
+
+// ── Customer Report CSV → Members ────────────────────────────────────────────
+function rzImportCustomerReport(rows, h) {
+  const members = load('members');
+  let imported=0, skipped=0;
+
+  const col = (kws) => h.find(x => kws.some(k => x.includes(k))) || null;
+  const cName    = col(['customername','customer_name','name']);
+  const cMobile  = col(['mobile']);
+  const cEmail   = col(['email']);
+  const cDOB     = col(['dateofbirth','date_of_birth','dob']);
+  const cGender  = col(['gender']);
+  const cJoined  = col(['joineddate','joined_date','joined']);
+  const cStatus  = col(['status']);
+  const cGroup   = col(['group']);
+  const cTag     = col(['tag']);
+
+  rows.forEach((rowStr, ri) => {
+    if (!rowStr.trim()) return;
+    const row = parseCSVRow(rowStr);
+    const get = (c) => c !== null ? (row[h.indexOf(c)] || '').trim() : '';
+
+    const name = get(cName);
+    if (!name) { skipped++; return; }
+    if (members.some(m => m.name?.toLowerCase() === name.toLowerCase())) { skipped++; return; }
+
+    const mobile = get(cMobile);
+    const email  = get(cEmail);
+    const joined = parseRezervDate(get(cJoined)) || '';
+    const status = get(cStatus) || 'Active';
+    const tag    = get(cTag);
+    const group  = get(cGroup);
+
+    members.push({
+      id: Date.now() + ri + 70000,
+      name, contact: mobile, email,
+      dob: get(cDOB), gender: get(cGender),
+      start: joined,
+      status: status === 'Active' ? 'Active' : 'Inactive',
+      package: group || '',
+      goal: 'Corrective Exercise',
+      notes: 'Rezerv Customer Report' + (tag ? ' · ' + tag : ''),
+      importedRezervCSV: true
+    });
+    imported++;
+  });
+
+  save('members', members);
+  return {
+    icon: '👥', type: 'Customer Report → Members',
+    html: `👥 <strong>${imported}</strong> member profiles imported<br>⏭ <strong>${skipped}</strong> skipped (duplicates or blank)`
+  };
+}
+
+// ── Class Attendance Summary CSV → Sessions ──────────────────────────────────
+function rzImportClassAttendance(rows, h) {
+  const sessions = load('sessions');
+  let imported=0, skipped=0;
+
+  const col = (kws) => h.find(x => kws.some(k => x.includes(k))) || null;
+  const cClass     = col(['classname','class_name','class']);
+  const cDate      = col(['date']);
+  const cTime      = col(['time']);
+  const cStaff     = col(['staff']);
+  const cCompleted = col(['completed']);
+  const cNoShow    = col(['noshow','no_show','no show']);
+  const cCancelled = col(['cancelled']);
+
+  rows.forEach((rowStr, ri) => {
+    if (!rowStr.trim()) return;
+    const row = parseCSVRow(rowStr);
+    const get = (c) => c !== null ? (row[h.indexOf(c)] || '').trim() : '';
+
+    const rawDate = get(cDate);
+    let date = rawDate;
+    if (rawDate.match(/\d{4}-[A-Za-z]{3}-\d{2}/)) {
+      const mo = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+      const p = rawDate.split('-');
+      date = `${p[0]}-${mo[p[1]]||'01'}-${p[2].padStart(2,'0')}`;
+    }
+    if (!date) { skipped++; return; }
+
+    const className = get(cClass);
+    const time      = get(cTime);
+    const staff     = cleanStaffName(get(cStaff));
+    const completed = parseInt(get(cCompleted)) || 0;
+    const noshow    = parseInt(get(cNoShow))    || 0;
+    const cancelled = parseInt(get(cCancelled)) || 0;
+
+    const dupKey = date + '|' + time + '|' + staff;
+    if (sessions.some(s => s._classKey === dupKey)) { skipped++; return; }
+
+    sessions.unshift({
+      id: Date.now() + ri, date, time,
+      member: completed > 0 ? `${completed} attended` : 'No bookings',
+      trainer: staff,
+      category: className?.toLowerCase().includes('group') ? 'Group Class' : 'Training',
+      type: className || 'Personal Training',
+      status: completed > 0 ? 'Completed' : noshow > 0 ? 'No Show' : 'Cancelled',
+      notes: `Attendance: ${completed} done · ${noshow} no-show · ${cancelled} cancelled`,
+      _classKey: dupKey,
+      importedRezervCSV: true
+    });
+    imported++;
+  });
+
+  save('sessions', sessions);
+  return {
+    icon: '📅', type: 'Class Attendance → Sessions',
+    html: `📅 <strong>${imported}</strong> class records imported<br>⏭ <strong>${skipped}</strong> skipped (empty or duplicate)`
+  };
+}
 
 function saveSession() {
   const member   = document.getElementById('s_member').value.trim();
