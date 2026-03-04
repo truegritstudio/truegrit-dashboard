@@ -638,7 +638,7 @@
       <button class="btn btn-outline btn-sm" onclick="openBackupModal()" title="Auto Backup">☁ Backup</button>
       <button class="btn btn-outline btn-sm" onclick="exportData()">↓ Export CSV</button>
       <!-- Cloud sync status badge -->
-      <span id="syncStatusBadge" style="font-size:10px;font-weight:700;border:1px solid transparent;border-radius:6px;padding:3px 8px;"></span>
+      <span id="syncStatusBadge" style="font-size:10px;font-weight:700;border:1px solid;border-radius:6px;padding:3px 8px;color:#6ab87a;background:rgba(106,184,122,0.1);border-color:rgba(106,184,122,0.3);">💾 Local</span>
       <label style="cursor:pointer;margin:0;" title="Import any Rezerv CSV report — auto-detected">
         <span class="btn btn-outline btn-sm" style="display:inline-flex;align-items:center;gap:5px;color:var(--gold);border-color:rgba(201,168,76,0.4);background:rgba(201,168,76,0.05);">📥 Rezerv Import</span>
         <input type="file" accept=".csv" onchange="smartRezervImport(this)" style="display:none;" multiple>
@@ -673,7 +673,7 @@
       <option value="">All Years</option>
       <option value="2024">2024</option>
       <option value="2025">2025</option>
-      <option value="2026" selected>2026</option>
+      <option value="2026">2026</option>
     </select>
     <input type="date" id="filterDateFrom" onchange="applyFilters()" placeholder="From">
     <input type="date" id="filterDateTo" onchange="applyFilters()" placeholder="To">
@@ -2661,105 +2661,29 @@ setTimeout(calcStudioUtilization, 300);
 
 
 // ============================
-// SUPABASE CLOUD SYNC
+// LOCAL STORAGE SYSTEM (no cloud dependency)
 // ============================
-const SUPABASE_URL = 'https://kjdxpkisrmdsoinriagi.supabase.co';
-const SUPABASE_KEY = 'sb_publishable_T6OP5i4Wng6WjKTEr5A-LA_TGG5l2j8';
-
-const SUPABASE_TABLES = {
-  members: 'tgs_members', sessions: 'tgs_sessions', leads: 'tgs_leads',
-  sales: 'tgs_sales', sat: 'tgs_sat', log: 'tgs_log',
-  expenses: 'tgs_expenses', trainer_clients: 'tgs_trainer_clients'
+const KEYS = {
+  members:'tgs_members', sessions:'tgs_sessions', leads:'tgs_leads',
+  sales:'tgs_sales', sat:'tgs_sat', log:'tgs_log',
+  expenses:'tgs_expenses', trainer_clients:'tgs_trainer_clients'
 };
-
-const KEYS = { members:'tgs_members', sessions:'tgs_sessions', leads:'tgs_leads', sales:'tgs_sales', sat:'tgs_sat', log:'tgs_log' };
 
 // In-memory cache for instant UI response
 const _cache = {};
-let _cloudEnabled = true;
-let _syncStatus = 'idle'; // idle | syncing | error | ok
-
-async function sbFetch(table, method, body) {
-  const url = `${SUPABASE_URL}/rest/v1/${table}`;
-  const headers = {
-    'apikey': SUPABASE_KEY,
-    'Authorization': `Bearer ${SUPABASE_KEY}`,
-    'Content-Type': 'application/json',
-    'Prefer': method === 'POST' ? 'return=representation' : ''
-  };
-  try {
-    const res = await fetch(method === 'GET' ? url + '?select=*&order=id.asc' : url, {
-      method, headers, body: body ? JSON.stringify(body) : undefined
-    });
-    if (!res.ok) {
-      const errText = await res.text();
-      if (res.status === 401 || res.status === 403) {
-        console.warn('[TGS] Supabase auth error — check API key or RLS policies:', errText);
-      } else if (res.status === 404) {
-        console.warn('[TGS] Supabase table not found:', table, '— run the SQL setup script');
-      } else {
-        console.warn('[TGS] Supabase error:', res.status, errText);
-      }
-      _cloudEnabled = false;
-      updateSyncBadge('error');
-      return null;
-    }
-    _cloudEnabled = true;
-    return method === 'DELETE' ? [] : await res.json();
-  } catch(e) {
-    // Only log once per session to avoid console spam
-    if (!window._sbErrLogged) {
-      console.warn('[TGS] Supabase unreachable — running in offline mode. Data saved locally.\nFix: Check Supabase dashboard → Project Settings → API → confirm tables exist and RLS allows anon reads.\nError:', e.message);
-      window._sbErrLogged = true;
-    }
-    _cloudEnabled = false;
-    updateSyncBadge('error');
-    return null;
-  }
-}
-
-// Load from Supabase — returns array of records
-async function loadCloud(key) {
-  const table = SUPABASE_TABLES[key] || ('tgs_' + key);
-  const rows = await sbFetch(table, 'GET');
-  if (!rows) return null;
-  return rows.map(r => ({ ...r.data, _rowid: r.id }));
-}
-
-// Save entire dataset to Supabase (delete all + insert fresh)
-async function saveCloud(key, data) {
-  const table = SUPABASE_TABLES[key] || ('tgs_' + key);
-  // Delete all existing rows
-  await fetch(`${SUPABASE_URL}/rest/v1/${table}?id=gte.0`, {
-    method: 'DELETE',
-    headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-  });
-  if (!data.length) return;
-  // Insert all rows
-  const rows = data.map(item => ({ data: item, branch_id: 'main' }));
-  await sbFetch(table, 'POST', rows);
-}
 
 function updateSyncBadge(status) {
-  _syncStatus = status;
-  let badge = document.getElementById('syncStatusBadge');
+  // localStorage-only mode — always show as local
+  const badge = document.getElementById('syncStatusBadge');
   if (!badge) return;
-  const styles = {
-    syncing: 'color:#7aaac8;background:rgba(122,170,200,0.1);border-color:rgba(122,170,200,0.3);',
-    ok:      'color:#6ab87a;background:rgba(106,184,122,0.1);border-color:rgba(106,184,122,0.3);',
-    error:   'color:#c07070;background:rgba(192,112,112,0.1);border-color:rgba(192,112,112,0.3);',
-    idle:    'color:var(--muted);background:transparent;border-color:transparent;'
-  };
-  badge.style.cssText = `font-size:10px;font-weight:700;border:1px solid;border-radius:6px;padding:3px 8px;transition:all 0.3s;${styles[status]||styles.idle}`;
-  badge.textContent = { syncing:'⟳ Syncing...', ok:'☁ Synced', error:'⚠ Offline — tap to retry', idle:'' }[status] || '';
-  badge.style.cursor = status === 'error' ? 'pointer' : 'default';
-  badge.onclick = status === 'error' ? () => { window._sbErrLogged = false; initCloudSync(); } : null;
+  badge.style.cssText = 'font-size:10px;font-weight:700;border:1px solid;border-radius:6px;padding:3px 8px;color:#6ab87a;background:rgba(106,184,122,0.1);border-color:rgba(106,184,122,0.3);';
+  badge.textContent = '💾 Local';
 }
 
-// ── Main load/save (with cloud sync + local fallback) ──────────────
+// ── Main load/save (localStorage only) ──────────────────────────
 function load(key) {
   if (_cache[key]) return _cache[key];
-  try { 
+  try {
     const local = JSON.parse(localStorage.getItem(KEYS[key] || ('tgs_' + key)) || '[]');
     _cache[key] = local;
     return local;
@@ -2769,79 +2693,18 @@ function load(key) {
 function save(key, data) {
   _cache[key] = data;
   localStorage.setItem(KEYS[key] || ('tgs_' + key), JSON.stringify(data));
-  // Async cloud sync (non-blocking)
-  if (_cloudEnabled) {
-    updateSyncBadge('syncing');
-    saveCloud(key, data).then(() => updateSyncBadge('ok')).catch(() => updateSyncBadge('error'));
-  }
 }
 
-// ── Initial cloud load on startup ──────────────────────────────────
-async function initCloudSync() {
-  updateSyncBadge('syncing');
-  let anyLoaded = false;
-  window._sbErrLogged = false; // reset per session
-
-  // Quick connection test first — ping tgs_members
-  const testRes = await sbFetch('tgs_members', 'GET');
-  if (testRes === null) {
-    // Supabase unreachable — go offline gracefully
-    updateSyncBadge('error');
-    console.warn('[TGS] Supabase offline — all data will save to localStorage only.');
-    // Show one-time diagnostic toast
-    setTimeout(() => {
-      const toastEl = document.getElementById('toast');
-      if (toastEl) {
-        toastEl.textContent = '⚠ Cloud offline — data saved locally only';
-        toastEl.style.background = 'rgba(192,112,112,0.9)';
-        toastEl.style.opacity = '1';
-        toastEl.style.transform = 'translateY(0)';
-        setTimeout(() => { toastEl.style.opacity='0'; toastEl.style.background=''; }, 4000);
-      }
-    }, 1500);
-    return;
-  }
-
-  const keys = ['members','sessions','leads','sales','sat','log','expenses'];
-  for (const key of keys) {
-    const cloudData = await loadCloud(key);
-    if (cloudData && cloudData.length > 0) {
-      _cache[key] = cloudData;
-      localStorage.setItem(KEYS[key] || ('tgs_' + key), JSON.stringify(cloudData));
-      anyLoaded = true;
-    }
-  }
-  // Load trainer_clients and trainer_leaves from tgs_settings table
-  const settingsKeys = ['trainer_clients', 'trainer_leaves', 'trainers'];
-  for (const key of settingsKeys) {
-    try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/tgs_settings?key=eq.${key}&select=value`, {
-        headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-      });
-      const rows = await res.json();
-      if (rows && rows.length > 0 && rows[0].value) {
-        const storageKey = key === 'trainer_clients' ? 'tgs_trainer_clients' : key === 'trainer_leaves' ? 'tgs_trainer_leaves' : 'tgs_trainers';
-        localStorage.setItem(storageKey, JSON.stringify(rows[0].value));
-        anyLoaded = true;
-      }
-    } catch(e) { console.warn('[TGS] Settings load error:', e); }
-  }
-  if (anyLoaded) {
-    updateSyncBadge('ok');
-    renderAll();
-    toast('☁ Data loaded from cloud');
-  } else {
-    updateSyncBadge(_cloudEnabled ? 'ok' : 'error');
-  }
+// ── Startup init (localStorage only) ────────────────────────────
+function initCloudSync() {
+  updateSyncBadge('ok');
+  renderAll();
 }
-
-// Seed sample data if empty
-// seedData removed — cloud sync active
 
 // ============================
 // FILTER STATE
 // ============================
-let filters = { month: '', year: '2026', dateFrom: '', dateTo: '', trainer: '' };
+let filters = { month: '', year: '', dateFrom: '', dateTo: '', trainer: '' };
 
 function applyFilters() {
   filters.month = document.getElementById('filterMonth').value;
@@ -2853,11 +2716,11 @@ function applyFilters() {
 }
 function clearFilters() {
   document.getElementById('filterMonth').value = '';
-  document.getElementById('filterYear').value = '2026';
+  document.getElementById('filterYear').value = '';
   document.getElementById('filterDateFrom').value = '';
   document.getElementById('filterDateTo').value = '';
   document.getElementById('filterTrainer').value = '';
-  filters = { month:'', year:'2026', dateFrom:'', dateTo:'', trainer:'' };
+  filters = { month:'', year:'', dateFrom:'', dateTo:'', trainer:'' };
   renderAll();
 }
 
@@ -4850,17 +4713,7 @@ function loadTrainers() {
 }
 function saveTrainers(d) {
   localStorage.setItem('tgs_trainers', JSON.stringify(d));
-  if (_cloudEnabled) {
-    updateSyncBadge('syncing');
-    fetch(`${SUPABASE_URL}/rest/v1/tgs_settings?key=eq.trainers`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    }).then(() => fetch(`${SUPABASE_URL}/rest/v1/tgs_settings`, {
-      method: 'POST',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: 'trainers', value: d })
-    })).then(() => updateSyncBadge('ok')).catch(() => updateSyncBadge('error'));
-  }
+
 }
 
 // Returns only Active trainer names for use in <select> dropdowns
@@ -6188,17 +6041,7 @@ function loadTrainerClients() {
 function saveTrainerClients(d) {
   localStorage.setItem('tgs_trainer_clients', JSON.stringify(d));
   // Sync to Supabase as a single settings row
-  if (_cloudEnabled) {
-    updateSyncBadge('syncing');
-    fetch(`${SUPABASE_URL}/rest/v1/tgs_settings?key=eq.trainer_clients`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    }).then(() => fetch(`${SUPABASE_URL}/rest/v1/tgs_settings`, {
-      method: 'POST',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: 'trainer_clients', value: d })
-    })).then(() => updateSyncBadge('ok')).catch(() => updateSyncBadge('error'));
-  }
+
 }
 
 function getTrainerClients(trainerId) {
@@ -6940,17 +6783,7 @@ function toggleMedicalField() {
 function loadTrainerLeaves() { try { return JSON.parse(localStorage.getItem('tgs_trainer_leaves') || '{}'); } catch { return {}; } }
 function saveTrainerLeaves(d) {
   localStorage.setItem('tgs_trainer_leaves', JSON.stringify(d));
-  if (_cloudEnabled) {
-    updateSyncBadge('syncing');
-    fetch(`${SUPABASE_URL}/rest/v1/tgs_settings?key=eq.trainer_leaves`, {
-      method: 'DELETE',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` }
-    }).then(() => fetch(`${SUPABASE_URL}/rest/v1/tgs_settings`, {
-      method: 'POST',
-      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: 'trainer_leaves', value: d })
-    })).then(() => updateSyncBadge('ok')).catch(() => updateSyncBadge('error'));
-  }
+
 }
 
 let _leavingTrainerId = null;
