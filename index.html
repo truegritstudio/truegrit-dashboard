@@ -453,6 +453,24 @@
   .gauge-bar { height: 100%; border-radius: 4px; }
   .gauge-val { font-family: 'DM Mono', monospace; font-size: 12px; color: var(--gold); width: 36px; text-align: right; flex-shrink: 0; }
 
+  /* ── Studio Utilization Calculator ── */
+  .util-section { display: grid; grid-template-columns: 200px 1fr; gap: 28px; align-items: start; margin-top:16px; }
+  .util-gauge-wrap { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .util-gauge-svg { width: 180px; height: 110px; }
+  .util-gauge-value { font-family: 'Cormorant Garamond', serif; font-size: 36px; font-weight: 500; color: var(--gold); text-align: center; }
+  .util-gauge-label { font-family: 'DM Mono', monospace; font-size: 9px; color: var(--muted); letter-spacing: 0.2em; text-transform: uppercase; text-align: center; }
+  .util-metrics { display: flex; flex-direction: column; gap: 10px; }
+  .util-metric { background: var(--bg3); border: 1px solid var(--border); padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-radius: 4px; }
+  .util-metric-label { font-size: 10px; color: var(--muted); font-family: 'DM Mono', monospace; letter-spacing: 0.1em; text-transform: uppercase; }
+  .util-metric-val { font-family: 'Cormorant Garamond', serif; font-size: 22px; color: var(--text); }
+  .util-input-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+  .util-input-card { background: var(--bg3); border: 1px solid var(--border); padding: 12px 14px; border-radius: 4px; }
+  .util-input-card label { display: block; font-size: 10px; color: var(--muted); font-family: 'DM Mono', monospace; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 8px; }
+  .util-input-card input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--cream); border-radius: 4px; padding: 7px 10px; font-size: 18px; font-family: 'Cormorant Garamond', serif; outline: none; }
+  .util-input-card input:focus { border-color: var(--gold); }
+  .util-calc-btn { background: transparent; border: 1px solid var(--gold); color: var(--gold); font-family: 'DM Mono', monospace; font-size: 11px; letter-spacing: 0.15em; padding: 9px 20px; cursor: pointer; border-radius: 4px; transition: all 0.2s; }
+  .util-calc-btn:hover { background: rgba(201,168,76,0.1); }
+
   /* Chart bar (simple CSS) */
   .bar-chart { display: flex; gap: 8px; align-items: flex-end; height: 100px; }
   .bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; }
@@ -806,6 +824,79 @@
         <button class="btn btn-gold btn-sm" onclick="openSatModal()">+ Add Rating</button>
       </div>
     </div>
+
+    <!-- STUDIO UTILIZATION CALCULATOR -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-header">
+        <div class="card-title">Studio Utilization Rate</div>
+        <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;letter-spacing:0.08em;">8AM–8PM · MON–SAT · MAX 3 CLIENTS/HR</div>
+      </div>
+      <div class="card-body" style="padding:16px;">
+        <div class="util-input-grid">
+          <div class="util-input-card">
+            <label>Total Visits This Week</label>
+            <input type="number" id="utilInputVisits" placeholder="0" value="0" oninput="calcStudioUtilization()">
+          </div>
+          <div class="util-input-card">
+            <label>Hours Conducted (Training)</label>
+            <input type="number" id="utilInputHours" placeholder="0" value="0" oninput="calcStudioUtilization()">
+          </div>
+          <div class="util-input-card">
+            <label>Operating Days This Week</label>
+            <input type="number" id="utilInputDays" placeholder="6" value="6" min="1" max="6" oninput="calcStudioUtilization()">
+          </div>
+        </div>
+        <p style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:14px;letter-spacing:0.08em;">
+          FORMULA: Utilization = Hours Conducted ÷ Total Available Client-Hours × 100 &nbsp;|&nbsp; Capacity = Days × 12hrs × 3 clients = <span id="utilMaxHours" style="color:var(--gold);">—</span> client-hrs/week
+        </p>
+        <button class="util-calc-btn" onclick="calcStudioUtilization()">▶ CALCULATE UTILIZATION</button>
+        <div class="util-section" id="utilizationResult">
+          <div class="util-gauge-wrap">
+            <svg class="util-gauge-svg" viewBox="0 0 180 110">
+              <defs>
+                <linearGradient id="utilGaugeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" style="stop-color:#8B6E2E"/>
+                  <stop offset="100%" style="stop-color:#E8C97A"/>
+                </linearGradient>
+              </defs>
+              <path d="M 20 100 A 70 70 0 0 1 160 100" fill="none" stroke="#1A1A18" stroke-width="12" stroke-linecap="round"/>
+              <path id="utilGaugeArc" d="M 20 100 A 70 70 0 0 1 160 100" fill="none" stroke="url(#utilGaugeGrad)" stroke-width="12" stroke-linecap="round" stroke-dasharray="220" stroke-dashoffset="220"/>
+              <circle cx="90" cy="100" r="4" fill="var(--gold)"/>
+              <line id="utilGaugeNeedle" x1="90" y1="100" x2="90" y2="38" stroke="var(--gold)" stroke-width="2" stroke-linecap="round" transform="rotate(-90 90 100)"/>
+            </svg>
+            <div class="util-gauge-value" id="utilGaugePercent">0%</div>
+            <div class="util-gauge-label" id="utilGaugeStatus">No data</div>
+          </div>
+          <div class="util-metrics">
+            <div class="util-metric">
+              <span class="util-metric-label">Total Visits</span>
+              <span class="util-metric-val" id="utilMetricVisits">—</span>
+            </div>
+            <div class="util-metric">
+              <span class="util-metric-label">Hours Conducted</span>
+              <span class="util-metric-val" id="utilMetricHours">—</span>
+            </div>
+            <div class="util-metric">
+              <span class="util-metric-label">Available Client-Hours</span>
+              <span class="util-metric-val" id="utilMetricAvail">—</span>
+            </div>
+            <div class="util-metric">
+              <span class="util-metric-label">Idle Hours</span>
+              <span class="util-metric-val" id="utilMetricIdle" style="color:var(--red);">—</span>
+            </div>
+            <div class="util-metric">
+              <span class="util-metric-label">Visit Utilization</span>
+              <span class="util-metric-val" id="utilMetricVisitUtil">—</span>
+            </div>
+            <div class="util-metric">
+              <span class="util-metric-label">Hour Utilization</span>
+              <span class="util-metric-val" id="utilMetricHourUtil" style="color:var(--gold);">—</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- END UTILIZATION CALCULATOR -->
     <div class="grid-2">
       <div class="card">
         <div class="card-header"><div class="card-title">Average Satisfaction by Trainer</div></div>
@@ -2516,6 +2607,58 @@
 
 <script>
 // Rezerv seeder removed — cloud sync active
+
+// ============================
+// STUDIO UTILIZATION CALCULATOR
+// ============================
+function calcStudioUtilization() {
+  const visits = parseInt(document.getElementById('utilInputVisits').value) || 0;
+  const hours  = parseInt(document.getElementById('utilInputHours').value)  || 0;
+  const days   = parseInt(document.getElementById('utilInputDays').value)   || 6;
+
+  const hoursPerDay      = 12; // 8AM–8PM
+  const maxClientsPerHr  = 3;
+  const totalClientHours = days * hoursPerDay * maxClientsPerHr;
+  const totalAvailHours  = days * hoursPerDay;
+
+  document.getElementById('utilMaxHours').textContent = totalClientHours;
+
+  const hourUtilPct  = totalClientHours > 0 ? (hours / totalClientHours * 100) : 0;
+  const visitUtilPct = totalClientHours > 0 ? (visits / totalClientHours * 100) : 0;
+  const idleHours    = Math.max(0, totalAvailHours - (hours / maxClientsPerHr));
+
+  document.getElementById('utilMetricVisits').textContent   = visits;
+  document.getElementById('utilMetricHours').textContent    = hours + ' hrs';
+  document.getElementById('utilMetricAvail').textContent    = totalClientHours + ' client-hrs';
+  document.getElementById('utilMetricIdle').textContent     = idleHours.toFixed(1) + ' hrs';
+  document.getElementById('utilMetricVisitUtil').textContent = visitUtilPct.toFixed(1) + '%';
+  document.getElementById('utilMetricHourUtil').textContent  = hourUtilPct.toFixed(1) + '%';
+
+  const pct = Math.min(100, hourUtilPct);
+  document.getElementById('utilGaugePercent').textContent = pct.toFixed(1) + '%';
+
+  let status = 'Idle', color = 'var(--muted)';
+  if (pct >= 80)      { status = 'Fully Utilized 🔥'; color = 'var(--gold)'; }
+  else if (pct >= 60) { status = 'High Utilization';  color = 'var(--green)'; }
+  else if (pct >= 40) { status = 'Moderate';           color = 'var(--blue)'; }
+  else if (pct >= 20) { status = 'Low Utilization';   color = 'var(--red)'; }
+
+  document.getElementById('utilGaugeStatus').textContent  = status;
+  document.getElementById('utilGaugeStatus').style.color  = color;
+  document.getElementById('utilGaugePercent').style.color = color;
+
+  // Animate arc (220 = full arc length)
+  const offset = 220 - (pct / 100 * 220);
+  document.getElementById('utilGaugeArc').style.strokeDashoffset = offset;
+
+  // Animate needle (-90° to +90° = 180° range)
+  const angle = -90 + (pct / 100 * 180);
+  document.getElementById('utilGaugeNeedle').setAttribute('transform', `rotate(${angle} 90 100)`);
+}
+
+// Init on load
+setTimeout(calcStudioUtilization, 300);
+
 
 // ============================
 // SUPABASE CLOUD SYNC
