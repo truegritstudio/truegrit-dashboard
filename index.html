@@ -2691,10 +2691,27 @@ async function sbFetch(table, method, body) {
     const res = await fetch(method === 'GET' ? url + '?select=*&order=id.asc' : url, {
       method, headers, body: body ? JSON.stringify(body) : undefined
     });
-    if (!res.ok) throw new Error(await res.text());
+    if (!res.ok) {
+      const errText = await res.text();
+      if (res.status === 401 || res.status === 403) {
+        console.warn('[TGS] Supabase auth error — check API key or RLS policies:', errText);
+      } else if (res.status === 404) {
+        console.warn('[TGS] Supabase table not found:', table, '— run the SQL setup script');
+      } else {
+        console.warn('[TGS] Supabase error:', res.status, errText);
+      }
+      _cloudEnabled = false;
+      updateSyncBadge('error');
+      return null;
+    }
+    _cloudEnabled = true;
     return method === 'DELETE' ? [] : await res.json();
   } catch(e) {
-    console.warn('Supabase error:', e.message);
+    // Only log once per session to avoid console spam
+    if (!window._sbErrLogged) {
+      console.warn('[TGS] Supabase unreachable — running in offline mode. Data saved locally.\nFix: Check Supabase dashboard → Project Settings → API → confirm tables exist and RLS allows anon reads.\nError:', e.message);
+      window._sbErrLogged = true;
+    }
     _cloudEnabled = false;
     updateSyncBadge('error');
     return null;
@@ -2734,7 +2751,9 @@ function updateSyncBadge(status) {
     idle:    'color:var(--muted);background:transparent;border-color:transparent;'
   };
   badge.style.cssText = `font-size:10px;font-weight:700;border:1px solid;border-radius:6px;padding:3px 8px;transition:all 0.3s;${styles[status]||styles.idle}`;
-  badge.textContent = { syncing:'⟳ Syncing...', ok:'☁ Synced', error:'⚠ Offline', idle:'' }[status] || '';
+  badge.textContent = { syncing:'⟳ Syncing...', ok:'☁ Synced', error:'⚠ Offline — tap to retry', idle:'' }[status] || '';
+  badge.style.cursor = status === 'error' ? 'pointer' : 'default';
+  badge.onclick = status === 'error' ? () => { window._sbErrLogged = false; initCloudSync(); } : null;
 }
 
 // ── Main load/save (with cloud sync + local fallback) ──────────────
@@ -2761,6 +2780,28 @@ function save(key, data) {
 async function initCloudSync() {
   updateSyncBadge('syncing');
   let anyLoaded = false;
+  window._sbErrLogged = false; // reset per session
+
+  // Quick connection test first — ping tgs_members
+  const testRes = await sbFetch('tgs_members', 'GET');
+  if (testRes === null) {
+    // Supabase unreachable — go offline gracefully
+    updateSyncBadge('error');
+    console.warn('[TGS] Supabase offline — all data will save to localStorage only.');
+    // Show one-time diagnostic toast
+    setTimeout(() => {
+      const toastEl = document.getElementById('toast');
+      if (toastEl) {
+        toastEl.textContent = '⚠ Cloud offline — data saved locally only';
+        toastEl.style.background = 'rgba(192,112,112,0.9)';
+        toastEl.style.opacity = '1';
+        toastEl.style.transform = 'translateY(0)';
+        setTimeout(() => { toastEl.style.opacity='0'; toastEl.style.background=''; }, 4000);
+      }
+    }, 1500);
+    return;
+  }
+
   const keys = ['members','sessions','leads','sales','sat','log','expenses'];
   for (const key of keys) {
     const cloudData = await loadCloud(key);
@@ -2783,7 +2824,7 @@ async function initCloudSync() {
         localStorage.setItem(storageKey, JSON.stringify(rows[0].value));
         anyLoaded = true;
       }
-    } catch(e) { console.warn('Settings load error:', e); }
+    } catch(e) { console.warn('[TGS] Settings load error:', e); }
   }
   if (anyLoaded) {
     updateSyncBadge('ok');
@@ -3918,7 +3959,21 @@ function detectRezervType(h) {
   if (s.includes('packageid') || (s.includes('package') && s.includes('recognised_grosssales'))) return 'by_package';
   if (s.includes('datetime') && s.includes('recognisedpackagequantity')) return 'overtime';
   if (s.includes('classid') || s.includes('classname')) return 'by_class';
+  // Transactions / success_transactions export
+  if (s.includes('transaction') || s.includes('invoice') ||
+      (s.includes('amount') && (s.includes('client') || s.includes('customer') || s.includes('member'))) ||
+      (s.includes('date') && s.includes('service') && s.includes('staff')) ||
+      (s.includes('payment') && s.includes('status')) ||
+      s.includes('gross_sale') || s.includes('grosssale') ||
+      s.includes('net_sale') || s.includes('netsale') ||
+      s.includes('discount') ||
+      (s.includes('date') && s.includes('amount'))) return 'transactions';
   return 'unknown';
+}
+
+// ── Debug helper: log raw headers for unknown CSVs ──────────────────────────
+function debugRezervHeaders(h) {
+  console.log('[Rezerv CSV Headers]', h);
 }
 
 async function smartRezervImport(input) {
@@ -3942,8 +3997,12 @@ async function smartRezervImport(input) {
     else if (ftype === 'pricing_plan') res = rzImportSalesByPlan(dataRows, h);
     else if (ftype === 'by_package')   res = rzImportByPackage(dataRows, h);
     else if (ftype === 'overtime')     res = rzImportOvertime(dataRows, h);
+    else if (ftype === 'transactions') res = rzImportTransactions(dataRows, h);
     else if (ftype === 'by_class')     res = {icon:'📊', type:'Sales by Class', html:'Analytics file — no import needed'};
-    else                               res = {icon:'⚠️', type:'Unknown format', html:'File not recognized'};
+    else {
+      debugRezervHeaders(h);
+      res = {icon:'⚠️', type:'Unknown format', html:`File not recognized.<br><span style="font-size:10px;color:var(--muted);">Headers detected: <code style="background:rgba(201,168,76,0.1);padding:2px 4px;border-radius:3px;">${rawH.slice(0,6).join(', ')}</code><br>Screenshot this and send to your developer.</span>`};
+    }
     allResults.push({file: file.name, ...res});
   }
 
@@ -4104,6 +4163,115 @@ function rzImportOvertime(rows, h) {
   save('expenses', expenses);
   return {icon:'📈', type:'Sales over Time → P&L / Expenses',
     html:`📈 ${imported} daily revenue records<br>⏭ ${skipped} skipped (zero or duplicate)`};
+}
+
+// ── Transactions / success_transactions CSV ──────────────────────────────────
+function rzImportTransactions(rows, h) {
+  const sales    = load('sales');
+  const sessions = load('sessions');
+  const members  = load('members');
+  let importedSales=0, importedSessions=0, memberCreated=0, skipped=0;
+
+  // Flexible column finders — Rezerv export columns vary by account
+  const col = (keywords) => {
+    const k = keywords.map(x => x.toLowerCase());
+    return h.find(x => k.some(kw => x.includes(kw))) || null;
+  };
+
+  const cDate     = col(['date','transaction_date','created','booking_date']);
+  const cClient   = col(['client','customer','member','name','first_name']);
+  const cService  = col(['service','package','plan','product','description']);
+  const cStaff    = col(['staff','trainer','coach','employee']);
+  const cGross    = col(['gross','gross_sale','total','amount','price']);
+  const cNet      = col(['net','net_sale','net_amount']);
+  const cDisc     = col(['discount','disc']);
+  const cStatus   = col(['status','booking_status','payment_status']);
+  const cRef      = col(['ref','reference','invoice','transaction_id','booking_ref']);
+  const cContact  = col(['mobile','phone','contact','email']);
+
+  rows.forEach((rowStr, ri) => {
+    if (!rowStr.trim()) return;
+    const row = parseCSVRow(rowStr);
+    const get = (c) => c !== null ? (row[h.indexOf(c)] || '').trim() : '';
+
+    const rawDate = get(cDate);
+    const date    = parseRezervDate(rawDate);
+    if (!date) { skipped++; return; }
+
+    const client  = get(cClient);
+    const service = get(cService);
+    const staff   = cleanStaffName(get(cStaff));
+    const gross   = parseFloat(get(cGross).replace(/[₱,\s]/g,'')) || 0;
+    const net     = parseFloat(get(cNet).replace(/[₱,\s]/g,''))   || gross;
+    const disc    = parseFloat(get(cDisc).replace(/[₱,\s]/g,''))  || 0;
+    const status  = get(cStatus) || 'Completed';
+    const ref     = get(cRef);
+    const contact = get(cContact);
+
+    if (gross === 0 && !client) { skipped++; return; }
+
+    // De-duplicate by ref or date+client+amount
+    const dupKey = ref || (date + '|' + client + '|' + gross);
+    if (sales.some(s => (s.bookingRef && s.bookingRef === ref) || s._txKey === dupKey)) { skipped++; return; }
+
+    sales.unshift({
+      id: Date.now() + ri,
+      date, client: client || 'Walk-in',
+      package: mapRezervPackage(service),
+      amount: gross, gross, discount: disc, net,
+      by: staff || 'Rezerv',
+      status: status.toLowerCase().includes('cancel') ? 'Cancelled' :
+              status.toLowerCase().includes('refund') ? 'Refunded' : 'Completed',
+      notes: 'Rezerv Transactions' + (ref ? ' · ' + ref : ''),
+      bookingRef: ref || null,
+      _txKey: dupKey,
+      importedRezervCSV: true
+    });
+    importedSales++;
+
+    // Auto-create session record if it looks like a booking (not just a product sale)
+    if (client && service && !sessions.some(s => s.bookingRef === ref && ref)) {
+      const statusMap = {'completed':'Completed','no show':'No Show','cancelled':'Cancelled','no-show':'No Show'};
+      const sStatus = statusMap[status.toLowerCase()] || 'Completed';
+      sessions.unshift({
+        id: Date.now() + ri + 10000, date,
+        member: client, trainer: staff,
+        category: service.toLowerCase().includes('trial') ? 'Trial' :
+                  service.toLowerCase().includes('group') || service.toLowerCase().includes('class') ? 'Group Class' : 'Training',
+        type: service || 'Personal Training',
+        status: sStatus,
+        notes: 'Rezerv Transactions' + (ref ? ' · ' + ref : ''),
+        bookingRef: ref || null,
+        revenue: gross,
+        importedRezervCSV: true
+      });
+      importedSessions++;
+    }
+
+    // Auto-create member if new
+    if (client && contact && !members.some(m => m.name?.toLowerCase() === client.toLowerCase())) {
+      members.push({
+        id: Date.now() + ri + 50000, name: client,
+        contact: contact.includes('@') ? '' : contact,
+        email: contact.includes('@') ? contact : '',
+        package: mapRezervPackage(service),
+        trainer: staff, start: date,
+        status: 'Active', goal: 'Corrective Exercise',
+        notes: 'Auto-created from Rezerv Transactions'
+      });
+      memberCreated++;
+    }
+  });
+
+  save('sales', sales);
+  save('sessions', sessions);
+  if (memberCreated > 0) save('members', members);
+
+  return {
+    icon: '💳',
+    type: 'Transactions → Sales + Sessions + Members',
+    html: `💳 ${importedSales} sales records<br>📋 ${importedSessions} session records<br>👥 ${memberCreated} new members<br>⏭ ${skipped} skipped (zero or duplicate)`
+  };
 }
 
 
