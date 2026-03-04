@@ -535,6 +535,20 @@
     .form-grid { grid-template-columns: 1fr; }
     .form-group.full { grid-column: span 1; }
   }
+
+  /* Data Health Tabs */
+  .dh-tab { background:none; border:none; border-bottom:2px solid transparent; padding:8px 16px; font-size:12px; font-weight:600; color:var(--muted); cursor:pointer; transition:all 0.2s; white-space:nowrap; }
+  .dh-tab:hover { color:var(--cream); }
+  .dh-tab-active { color:var(--gold) !important; border-bottom-color:var(--gold) !important; }
+  .dh-issue-row { display:flex; align-items:flex-start; gap:12px; padding:12px 14px; border-bottom:1px solid var(--border); font-size:13px; }
+  .dh-issue-row:last-child { border-bottom:none; }
+  .dh-issue-badge { flex-shrink:0; font-size:10px; font-weight:700; padding:2px 8px; border-radius:8px; margin-top:2px; }
+  .dh-badge-dupe   { background:rgba(192,112,112,0.15); color:#c07070; }
+  .dh-badge-warn   { background:rgba(201,168,76,0.15);  color:var(--gold); }
+  .dh-badge-info   { background:rgba(106,184,122,0.15); color:var(--green); }
+  .dh-fix-btn { font-size:11px; font-weight:600; background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3); color:var(--gold); border-radius:6px; padding:3px 10px; cursor:pointer; white-space:nowrap; }
+  .dh-fix-btn:hover { background:rgba(201,168,76,0.2); }
+
 </style>
 </head>
 <body>
@@ -591,6 +605,10 @@
       <span>Packages</span>
     </div>
     <div class="nav-section">Log</div>
+    <div class="nav-item" id="nav-datahealth" onclick="showPage('datahealth', this)">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span>Data Health</span>
+    </div>
     <div class="nav-item" onclick="showPage('log', this)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
       <span>Daily Log</span>
@@ -911,6 +929,40 @@
       <div class="card-header"><div class="card-title">All Feedback Entries</div></div>
       <div id="satTable"></div>
     </div>
+  </div>
+
+  <!-- DATA HEALTH PAGE -->
+  <div id="page-datahealth" class="page" style="display:none;">
+    <div class="page-header">
+      <div>
+        <div class="page-title">🔍 Data Health</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px;">Duplicates · Errors · Import Log · Data Quality</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-outline btn-sm" onclick="renderDataHealth()">↻ Refresh</button>
+        <label style="cursor:pointer;margin:0;" title="Import any Rezerv CSV">
+          <span class="btn btn-outline btn-sm" style="color:var(--gold);border-color:rgba(201,168,76,0.4);">📥 Import CSV</span>
+          <input type="file" accept=".csv" onchange="smartRezervImport(this)" style="display:none;" multiple>
+        </label>
+      </div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div id="dhSummaryCards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:20px;"></div>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:16px;" id="dhTabBar">
+      <button onclick="showDhTab('dupes')"   id="dhtab-dupes"   class="dh-tab dh-tab-active">⚠ Duplicates</button>
+      <button onclick="showDhTab('missing')" id="dhtab-missing" class="dh-tab">❓ Missing Data</button>
+      <button onclick="showDhTab('orphans')" id="dhtab-orphans" class="dh-tab">🔗 Orphaned Records</button>
+      <button onclick="showDhTab('log')"     id="dhtab-log"     class="dh-tab">📋 Import Log</button>
+    </div>
+
+    <!-- Tab Panels -->
+    <div id="dhPanel-dupes"></div>
+    <div id="dhPanel-missing" style="display:none;"></div>
+    <div id="dhPanel-orphans" style="display:none;"></div>
+    <div id="dhPanel-log"     style="display:none;"></div>
   </div>
 
   <!-- DAILY LOG PAGE -->
@@ -1759,6 +1811,104 @@
       </div>
 
       <button onclick="closeModal('modalAdminPIN')" class="btn btn-outline btn-sm" style="width:100%;margin-top:8px;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Admin Reset Tab Modal -->
+<div class="overlay" id="modalResetTab">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-header">
+      <div class="modal-title">⚠ Reset / Clear Tab Data</div>
+      <button class="modal-close" onclick="closeModal('modalResetTab')">×</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:rgba(192,112,112,0.08);border:1px solid rgba(192,112,112,0.25);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:#c07070;font-weight:600;">
+        🔐 Admin-only action. This will permanently delete ALL data in the selected tabs. This cannot be undone.
+      </div>
+      <div style="font-size:11px;font-weight:700;color:var(--gold);letter-spacing:0.06em;margin-bottom:10px;">SELECT TABS TO RESET:</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px;">
+        <!-- Members -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="members" style="accent-color:#c07070;width:13px;height:13px;"> 👥 Members</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">All member records</span>
+        </label>
+        <!-- Sessions -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="sessions" style="accent-color:#c07070;width:13px;height:13px;"> 📋 Sessions</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">All session logs</span>
+        </label>
+        <!-- Leads -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="leads" style="accent-color:#c07070;width:13px;height:13px;"> 📊 Leads</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">All lead entries</span>
+        </label>
+        <!-- Sales -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="sales" style="accent-color:#c07070;width:13px;height:13px;"> 💰 Sales</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">All sale transactions</span>
+        </label>
+        <!-- Satisfaction -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="sat" style="accent-color:#c07070;width:13px;height:13px;"> ⭐ Satisfaction</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">All ratings & feedback</span>
+        </label>
+        <!-- Log -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="log" style="accent-color:#c07070;width:13px;height:13px;"> 📝 Daily Log</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">All log entries</span>
+        </label>
+        <!-- Expenses -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="expenses" style="accent-color:#c07070;width:13px;height:13px;"> 💳 Expenses</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">All expense records</span>
+        </label>
+        <!-- Trainer Clients -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="tgs_trainer_clients" style="accent-color:#c07070;width:13px;height:13px;"> 🏋️ Trainer Clients</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">Session allocations</span>
+        </label>
+        <!-- Member Docs -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="tgs_member_docs" style="accent-color:#c07070;width:13px;height:13px;"> 📁 Member Docs</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">Uploaded documents</span>
+        </label>
+        <!-- Trainer Leaves -->
+        <label style="display:flex;flex-direction:column;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;cursor:pointer;" onmouseover="this.style.background='rgba(192,112,112,0.06)'" onmouseout="this.style.background='var(--bg2)'">
+          <span style="display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;"><input type="checkbox" name="resetTab" value="tgs_trainer_leaves" style="accent-color:#c07070;width:13px;height:13px;"> 🗓 Trainer Leaves</span>
+          <span style="font-size:10px;color:var(--muted);padding-left:20px;">Leave & vacation records</span>
+        </label>
+      </div>
+
+      <!-- Select All / None -->
+      <div style="display:flex;gap:8px;margin-bottom:14px;">
+        <button onclick="document.querySelectorAll('#modalResetTab input[name=resetTab]').forEach(c=>c.checked=true)" style="background:rgba(192,112,112,0.08);border:1px solid rgba(192,112,112,0.2);color:#c07070;border-radius:5px;padding:4px 12px;font-size:11px;cursor:pointer;">☑ Select All</button>
+        <button onclick="document.querySelectorAll('#modalResetTab input[name=resetTab]').forEach(c=>c.checked=false)" style="background:var(--bg2);border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:4px 12px;font-size:11px;cursor:pointer;">☐ Clear All</button>
+      </div>
+
+      <div style="font-size:11px;font-weight:700;color:var(--gold);letter-spacing:0.06em;margin-bottom:8px;">TYPE <code style="background:rgba(192,112,112,0.1);padding:1px 6px;border-radius:4px;color:#c07070;">RESET</code> TO CONFIRM:</div>
+      <input type="text" id="resetConfirmText" placeholder='Type exactly: RESET' style="width:100%;background:var(--bg2);border:1px solid rgba(192,112,112,0.4);color:var(--cream);border-radius:6px;padding:8px 12px;font-size:13px;box-sizing:border-box;margin-bottom:14px;font-family:'DM Mono',monospace;letter-spacing:0.08em;">
+      <div class="form-actions">
+        <button class="btn btn-outline" onclick="closeModal('modalResetTab')">Cancel</button>
+        <button onclick="executeReset()" style="background:rgba(192,112,112,0.15);border:1px solid rgba(192,112,112,0.5);color:#c07070;border-radius:8px;padding:8px 20px;font-weight:700;font-size:13px;cursor:pointer;">⚠ RESET SELECTED</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Rezerv Import Modal -->
+<div class="overlay" id="modalRezervImport">
+  <div class="modal" style="max-width:580px;">
+    <div class="modal-header">
+      <div class="modal-title">📥 Rezerv Import Results</div>
+      <button class="modal-close" onclick="closeModal('modalRezervImport')">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="rezervImportResults" style="display:flex;flex-direction:column;gap:12px;max-height:420px;overflow-y:auto;padding-right:4px;"></div>
+      <div class="form-actions" style="margin-top:16px;">
+        <button class="btn btn-outline btn-sm" onclick="openDataHealth()" style="color:var(--gold);border-color:rgba(201,168,76,0.4);">🔍 Data Health Check</button>
+        <button class="btn btn-gold" onclick="closeModal('modalRezervImport');clearCache();renderAll();">✓ Done — Apply to Dashboard</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2815,6 +2965,8 @@ function renderAll() {
   renderPayroll();
   renderExpenses();
   renderTrainerPage();
+  // Re-render Data Health if currently visible
+  if (document.getElementById('page-datahealth')?.style.display !== 'none') renderDataHealth();
   if (gsConfig().auto_sync) syncAllToSheets(true);
 }
 
@@ -3904,62 +4056,160 @@ function parseCSVRow(rowStr) {
       else inQuote = !inQuote;
     } else if (ch === ',' && !inQuote) {
       result.push(cur.trim()); cur = '';
-    } else {
-      cur += ch;
-    }
+    } else { cur += ch; }
   }
   result.push(cur.trim());
   return result;
 }
 
-// ── Main entry point — called by file input onchange ──────────────
+// ── Flexible column getter ─────────────────────────────────────────
+function rzGet(row, headers, keyword) {
+  const kw = keyword.toLowerCase().replace(/[\s_]/g, '');
+  const idx = headers.findIndex(h => {
+    const norm = h.toLowerCase().replace(/[\s_\/.,#()']/g, '');
+    return norm === kw || norm.includes(kw) || kw.includes(norm.substring(0, Math.min(norm.length, 8)));
+  });
+  return idx >= 0 ? (row[idx] || '').trim() : '';
+}
+
+// ── Date parser (handles DD/MM/YY, DD/MM/YYYY, 2026-Jan-01) ───────
+function parseRezervDate(d) {
+  if (!d) return '';
+  const s = d.trim().split(' ')[0];
+  // ISO already: 2025-12-22
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // 2026-Jan-01
+  if (/^\d{4}-[A-Za-z]{3}-\d{2}$/.test(s)) {
+    const mo = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+    const p = s.split('-');
+    return `${p[0]}-${mo[p[1]]||'01'}-${p[2].padStart(2,'0')}`;
+  }
+  // DD/MM/YY or DD/MM/YYYY
+  const parts = s.split('/');
+  if (parts.length === 3) {
+    let [a, b, c] = parts;
+    const year = c.length === 2 ? '20' + c : c;
+    return year + '-' + b.padStart(2,'0') + '-' + a.padStart(2,'0');
+  }
+  return '';
+}
+
+function cleanStaffName(s) {
+  if (!s || !s.trim() || s === '-') return '';
+  // Handle comma-separated staff list — take first name
+  const first = s.split(',')[0].trim();
+  return first.replace(/Coach\s+/gi,'').replace('True Grit Admin','Admin').trim();
+}
+
+function mapRezervPackage(p) {
+  const m = {
+    'grind':'Grind — 8 Sessions','resolve':'Resolve — 12 Sessions',
+    'intense':'Intense — 24 Sessions','transform':'Transform — 40 Sessions',
+    'drop-in':'Single Session','free':'Complimentary',
+    'trial':'Trial Session','studio tour':'Studio Tour'
+  };
+  const key = (p||'').toLowerCase().trim();
+  return m[key] || p || '';
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// CSV TYPE DETECTION — order matters, most specific first
+// ══════════════════════════════════════════════════════════════════════
+function detectRezervType(h) {
+  const s = '|' + h.join('|').toLowerCase() + '|';
+
+  // 1. ATTENDANCE WITH REVENUE — unique: "date of service", "revenue per booking"
+  if (s.includes('|date of service|') || s.includes('|date_of_service|')) return 'attendance';
+  if (s.includes('revenue per booking') || s.includes('revenue_per_booking')) return 'attendance';
+  if (s.includes('total transaction revenue') || s.includes('booking ref/no')) return 'attendance';
+
+  // 2. CLASS ATTENDANCE SUMMARY — unique: classname + capacity + noshow
+  if ((s.includes('|classname|') || s.includes('|class_name|')) && s.includes('|capacity|')) return 'class_attendance';
+  if (s.includes('|classname|') && s.includes('|noshow|')) return 'class_attendance';
+
+  // 3. SUCCESS TRANSACTIONS — unique: transactionid + linked item + promo code
+  if (s.includes('|transactionid|') || s.includes('|transaction_id|')) return 'transactions';
+  if (s.includes('linked item') || s.includes('linked_item')) return 'transactions';
+  if (s.includes('promo code set') || s.includes('promo_code_set')) return 'transactions';
+  if (s.includes('|paid amount|') || s.includes('|paid_amount|')) return 'transactions';
+
+  // 4. CUSTOMER REPORT — unique: dateofbirth or joineddate or "total booking"
+  if (s.includes('|customername|') || s.includes('|customer_name|')) {
+    if (s.includes('dateofbirth') || s.includes('date_of_birth')) return 'customer_report';
+    if (s.includes('joineddate') || s.includes('joined_date') || s.includes('joined on')) return 'customer_report';
+    if (s.includes('total booking') || s.includes('total_booking')) return 'customer_report';
+    if (s.includes('|membership|') && s.includes('|completed|')) return 'customer_report';
+  }
+
+  // 5. SALES BY PRICING PLAN — unique: pricingplan, pricingtype
+  if (s.includes('pricingplan') || s.includes('pricing_plan') || s.includes('pricingtype')) return 'pricing_plan';
+
+  // 6. SALES BY CLASS — unique: classid, membershipsales, packagesales
+  if (s.includes('|classid|') || (s.includes('membershipsales') && s.includes('packagesales'))) return 'by_class';
+
+  // 7. SALES BY PACKAGE — unique: packageid + recognised_grosssales
+  if (s.includes('|packageid|') || (s.includes('package') && s.includes('recognised_grosssales'))) return 'by_package';
+
+  // 8. SALES OVER TIME — unique: recognisedpackagequantity
+  if (s.includes('recognisedpackagequantity') || s.includes('recognised_totalquantity')) return 'overtime';
+
+  // 9. TGS MEMBERS EXPORT (our own format)
+  if (s.includes('|name|') && s.includes('|package|') && s.includes('|trainer|') && s.includes('|goal|')) return 'tgs_members';
+
+  return 'unknown';
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// IMPORT DISPATCHER
+// ══════════════════════════════════════════════════════════════════════
 function smartRezervImport(inputEl) {
   const files = Array.from(inputEl.files);
   if (!files.length) return;
-  inputEl.value = ''; // reset so same file can be re-imported
+  inputEl.value = '';
 
   const resultsEl = document.getElementById('rezervImportResults');
-  resultsEl.innerHTML = '<div style="color:var(--muted);font-size:13px;">⟳ Processing...</div>';
+  resultsEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:12px;">⟳ Processing ' + files.length + ' file(s)...</div>';
   openModal('modalRezervImport');
 
-  let allResults = [];
-  let processed = 0;
+  let allResults = [], processed = 0;
 
   files.forEach(file => {
     const reader = new FileReader();
     reader.onload = e => {
       try {
         const text = e.target.result;
-        const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-        const headerLine = lines[0];
-        const headers = parseCSVRow(headerLine).map(h => h.replace(/\uFEFF/g,'').trim());
+        const lines = text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+        const headers = parseCSVRow(lines[0]).map(h => h.replace(/\uFEFF/g,'').trim());
         const rows = lines.slice(1).filter(l => l.trim());
-
         const type = detectRezervType(headers);
+
         let result;
-
-        if      (type === 'attendance')     result = rzImportAttendance(rows, headers);
-        else if (type === 'transactions')   result = rzImportTransactions(rows, headers);
-        else if (type === 'customer_report')result = rzImportCustomerReport(rows, headers);
+        if      (type === 'attendance')      result = rzImportAttendance(rows, headers);
+        else if (type === 'transactions')    result = rzImportTransactions(rows, headers);
+        else if (type === 'customer_report') result = rzImportCustomerReport(rows, headers);
         else if (type === 'class_attendance')result = rzImportClassAttendance(rows, headers);
-        else if (type === 'by_package')     result = rzImportByPackage(rows, headers);
-        else if (type === 'overtime')       result = rzImportOvertime(rows, headers);
-        else if (type === 'pricing_plan')   result = rzImportSalesByPlan(rows, headers);
-        else result = { icon: '❓', type: 'Unknown CSV format', html: 'Could not detect CSV type.<br>Headers: ' + headers.slice(0,5).join(', ') };
+        else if (type === 'pricing_plan')    result = rzImportPricingPlan(rows, headers);
+        else if (type === 'by_class')        result = rzImportByClass(rows, headers);
+        else if (type === 'by_package')      result = rzImportByPackage(rows, headers);
+        else if (type === 'overtime')        result = rzImportOvertime(rows, headers);
+        else if (type === 'tgs_members')     result = rzImportTGSMembers(rows, headers);
+        else result = {
+          icon: '❓', type: 'Unknown format',
+          html: `Cannot detect CSV type.<br><small style="color:var(--muted);">Headers: ${headers.slice(0,6).join(', ')}...</small>`
+        };
 
-        allResults.push({ file: file.name, ...result });
+        allResults.push({ file: file.name, type, ...result });
       } catch(err) {
-        allResults.push({ file: file.name, icon: '❌', type: 'Error', html: 'Import failed: ' + err.message });
+        allResults.push({ file: file.name, type:'error', icon:'❌', type_label:'Error', html: err.message });
       }
 
       processed++;
       if (processed === files.length) {
-        // All files done — render results
         resultsEl.innerHTML = allResults.map(r => `
           <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:14px 16px;">
-            <div style="font-size:10px;color:var(--muted);margin-bottom:6px;font-family:'DM Mono',monospace;">${r.file}</div>
-            <div style="font-size:12px;font-weight:700;color:var(--gold);margin-bottom:8px;">${r.icon} ${r.type}</div>
-            <div style="font-size:13px;color:var(--cream);line-height:1.8;">${r.html}</div>
+            <div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-family:'DM Mono',monospace;word-break:break-all;">${r.file}</div>
+            <div style="font-size:11px;font-weight:700;color:var(--gold);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em;">${r.icon || '📥'} ${r.type_label || r.type}</div>
+            <div style="font-size:13px;color:var(--cream);line-height:2;">${r.html}</div>
           </div>`).join('');
         clearCache();
         renderAll();
@@ -3969,112 +4219,167 @@ function smartRezervImport(inputEl) {
   });
 }
 
-function parseRezervDate(d) {
-  if (!d) return '';
-  const clean = d.trim().split(' ')[0];
-  const parts = clean.split('/');
-  if (parts.length === 3) {
-    let [a, b, c] = parts;
-    // DD/MM/YY or DD/MM/YYYY
-    const year = c.length === 2 ? '20' + c : c;
-    return year + '-' + b.padStart(2,'0') + '-' + a.padStart(2,'0');
-  }
-  return d;
-}
+// ══════════════════════════════════════════════════════════════════════
+// IMPORTER 1: SUCCESS TRANSACTIONS → Sales + Members + Leads
+// ══════════════════════════════════════════════════════════════════════
+function rzImportTransactions(rows, h) {
+  const sales   = load('sales');
+  const members = load('members');
+  const leads   = load('leads');
 
-function cleanStaffName(s) {
-  if (!s || !s.trim() || s.trim() === '-') return '';
-  return s.replace(/Coach\s+/gi,'').replace('True Grit Admin','Admin').trim();
-}
+  const existingTxIds  = new Set(sales.map(s => s.bookingRef).filter(Boolean));
+  const existingClients= new Set(sales.map(s => s.client?.toLowerCase()).filter(Boolean));
 
-function mapRezervPackage(p) {
-  const m = {
-    'grind':'Grind — 8 Sessions','resolve':'Resolve — 12 Sessions',
-    'intense':'Intense — 24 Sessions','transform':'Transform — 36 Sessions',
-    'founding grind':'Founding Grind — 8 Sessions','founding resolve':'Founding Resolve — 12 Sessions',
-    'founding intense':'Founding Intense — 24 Sessions','founding transform':'Founding Transform — 36 Sessions',
-    'drop-in':'Single Session','free':'Complimentary','trial':'Trial Session'
+  let countNew=0, countFounding=0, countRenewal=0, countSkip=0, countMember=0, countLead=0;
+  const errors = [];
+
+  rows.forEach((rowStr, ri) => {
+    if (!rowStr.trim()) return;
+    const row = parseCSVRow(rowStr);
+    if (row.length < 5) return;
+
+    const txId     = rzGet(row, h, 'transactionid') || rzGet(row, h, 'transaction_id');
+    const rawDate  = rzGet(row, h, 'paid on') || rzGet(row, h, 'paid_on');
+    const date     = parseRezervDate(rawDate);
+    if (!date) { countSkip++; return; }
+
+    // Skip duplicates
+    if (txId && existingTxIds.has(txId)) { countSkip++; return; }
+
+    const client   = rzGet(row, h, 'customername') || rzGet(row, h, 'customer_name');
+    const service  = rzGet(row, h, 'linked item')  || rzGet(row, h, 'linked_item');
+    const itemType = (rzGet(row, h, 'item type')   || rzGet(row, h, 'item_type')).toLowerCase();
+    const promo    = (rzGet(row, h, 'promo code')  || rzGet(row, h, 'promo_code')).toUpperCase().trim();
+    const staff    = cleanStaffName(rzGet(row, h, 'sold by') || rzGet(row, h, 'sold_by'));
+    const mobile   = rzGet(row, h, 'mobile');
+    const email    = rzGet(row, h, 'email');
+    const paidAmt  = parseFloat((rzGet(row, h, 'paid amount') || rzGet(row, h, 'paid_amount') || '0').replace(/[₱,\s]/g,'')) || 0;
+    const disc     = parseFloat((rzGet(row, h, 'discount') || '0').replace(/[₱,\s]/g,'')) || 0;
+    const tax      = parseFloat((rzGet(row, h, 'tax') || '0').replace(/[₱,\s]/g,'')) || 0;
+
+    // Skip free/test
+    if (paidAmt === 0) { countSkip++; return; }
+    if (!client || client.toLowerCase().includes('test')) { countSkip++; return; }
+
+    // Classify
+    const isFounding = promo === 'FOUNDING50';
+    const isRenewal  = promo.includes('RENEWAL') ||
+                       (!isFounding && existingClients.has(client.toLowerCase()) && paidAmt > 0);
+    const saleType   = isFounding ? 'New Sale' : isRenewal ? 'Renewal' : 'New Sale';
+    const founding   = isFounding ? 'Yes — Founding Member' : 'No';
+
+    if (isFounding) countFounding++;
+    else if (isRenewal) countRenewal++;
+    else countNew++;
+
+    existingClients.add(client.toLowerCase());
+    if (txId) existingTxIds.add(txId);
+
+    const saleRecord = {
+      id: Date.now() + ri,
+      date, client,
+      package: mapRezervPackage(service),
+      amount: paidAmt, discount: disc, tax,
+      net: paidAmt - tax,
+      by: staff || 'Rezerv',
+      type: saleType,
+      status: 'Completed',
+      promoCode: promo || null,
+      founding,
+      notes: 'Rezerv' + (promo ? ' · ' + promo : '') + (txId ? ' · ' + txId : ''),
+      bookingRef: txId || null,
+      importedRezervCSV: true
+    };
+    sales.unshift(saleRecord);
+
+    // Auto-create member
+    const isPackage = ['package','membership'].includes(itemType) ||
+                      ['grind','resolve','intense','transform'].some(p => service.toLowerCase().includes(p));
+    if (isPackage && client && !members.some(m => m.name?.toLowerCase() === client.toLowerCase())) {
+      members.push({
+        id: Date.now() + ri + 50000,
+        name: client, contact: mobile, email,
+        package: mapRezervPackage(service),
+        trainer: staff, start: date,
+        status: 'Active', founding,
+        goal: 'Corrective Exercise',
+        notes: 'From Rezerv Transactions' + (promo ? ' · ' + promo : '')
+      });
+      countMember++;
+    }
+  });
+
+  save('sales', sales);
+  if (countMember > 0) save('members', members);
+  if (countLead > 0) save('leads', leads);
+
+  return {
+    icon: '💳', type_label: 'Success Transactions',
+    html: [
+      `💳 <strong>${countFounding + countRenewal + countNew}</strong> sales imported`,
+      `⭐ <strong style="color:var(--gold)">${countFounding}</strong> founding members`,
+      `🔄 <strong>${countRenewal}</strong> renewals &nbsp; 💰 <strong>${countNew}</strong> new sales`,
+      countMember > 0 ? `👥 <strong>${countMember}</strong> member profiles created` : '',
+      `⏭ <strong>${countSkip}</strong> skipped (zero/test/duplicate)`
+    ].filter(Boolean).join('<br>')
   };
-  return m[(p||'').toLowerCase().trim()] || p || '';
 }
 
-function detectRezervType(h) {
-  const s = h.join('|').toLowerCase();
-
-  // ── 1. ATTENDANCE WITH REVENUE — check FIRST (has 'date of service' unique column) ──
-  if (s.includes('date of service') || s.includes('date_of_service')) return 'attendance';
-  if (s.includes('revenue per booking') || s.includes('revenue_per_booking')) return 'attendance';
-  if (s.includes('total transaction revenue') || s.includes('total_transaction_revenue')) return 'attendance';
-
-  // ── 2. CLASS ATTENDANCE SUMMARY — check before transactions ──
-  if ((s.includes('classname') || s.includes('class_name')) &&
-      (s.includes('capacity') || s.includes('noshow'))) return 'class_attendance';
-
-  // ── 3. TRANSACTIONS (success_transactions) ──
-  // Unique: TransactionID, Promo Code, Linked Item, Paid Amount, Item Type
-  if (s.includes('transactionid') || s.includes('transaction_id')) return 'transactions';
-  if (s.includes('linked item') || s.includes('linked_item')) return 'transactions';
-  if (s.includes('promo code') || s.includes('promo_code')) return 'transactions';
-  if (s.includes('paid amount') || s.includes('paid_amount')) return 'transactions';
-  if (s.includes('item type') || s.includes('item_type')) return 'transactions';
-
-  // ── 4. CUSTOMER REPORT ──
-  if ((s.includes('customername') || s.includes('customer_name')) &&
-      (s.includes('dateofbirth') || s.includes('date_of_birth') ||
-       s.includes('joineddate') || s.includes('joined_date') ||
-       s.includes('total booking') || s.includes('total_booking'))) return 'customer_report';
-
-  // ── 5. ANALYTICS FILES ──
-  if (s.includes('pricingplan') || s.includes('pricing_plan')) return 'pricing_plan';
-  if (s.includes('packageid') || (s.includes('package') && s.includes('recognised_grosssales'))) return 'by_package';
-  if (s.includes('recognisedpackagequantity') || s.includes('recognised_totalquantity')) return 'overtime';
-
-  return 'unknown';
-}
-
-// ── Attendance With Revenue CSV → Sessions + Leads + Members ─────────────────
+// ══════════════════════════════════════════════════════════════════════
+// IMPORTER 2: ATTENDANCE WITH REVENUE → Sessions + Leads
+// ══════════════════════════════════════════════════════════════════════
 function rzImportAttendance(rows, h) {
   const sessions = load('sessions');
   const leads    = load('leads');
   const members  = load('members');
-  // Load known founding members from existing sales records
-  const foundingSales = load('sales').filter(s => s.founding === 'Yes — Founding Member');
-  const foundingNames = new Set(foundingSales.map(s => s.client?.toLowerCase()));
+  const sales    = load('sales');
 
-  let imported=0, memberCreated=0, leadCreated=0, deducted=0, skipped=0;
+  // Get founding member names from sales
+  const foundingNames = new Set(
+    sales.filter(s => s.founding === 'Yes — Founding Member').map(s => s.client?.toLowerCase())
+  );
+
+  const existingRefs = new Set(sessions.map(s => s.bookingRef).filter(Boolean));
+  let countSession=0, countLead=0, countMember=0, countSkip=0;
 
   rows.forEach((rowStr, ri) => {
+    if (!rowStr.trim()) return;
     const row = parseCSVRow(rowStr);
-    const customer   = rzGet(row, h, 'customer');
-    const rawDate    = rzGet(row, h, 'date_of_service');
-    if (!customer || customer.toLowerCase()==='walk-in customer' || !rawDate) { skipped++; return; }
 
-    const bookingRef = rzGet(row, h, 'booking_ref');
-    if (bookingRef && sessions.some(s => s.bookingRef === bookingRef)) { skipped++; return; }
+    const customer  = rzGet(row, h, 'customer');
+    if (!customer || customer.toLowerCase() === 'walk-in customer') { countSkip++; return; }
 
-    const date    = parseRezervDate(rawDate);
-    if (!date) { skipped++; return; }
-    const time    = rzGet(row, h, 'start_time');
-    const staff   = cleanStaffName(rzGet(row, h, 'staff'));
-    const service = rzGet(row, h, 'service_name');
-    const payment = rzGet(row, h, 'payment');
-    const mobile  = rzGet(row, h, 'mobile').replace(/^-$/,'').replace(/^\+/,'');
-    const email   = rzGet(row, h, 'email').replace(/^-$/,'');
-    const revenue = parseFloat(rzGet(row, h, 'revenue_per_booking')) || 0;
-    const rawSt   = rzGet(row, h, 'status');
-    const stMap   = {'completed':'Completed','no show':'No Show','cancelled':'Cancelled','late cancelled':'Cancelled'};
-    const status  = stMap[rawSt.toLowerCase()] || 'Completed';
-    const svc     = service.toLowerCase();
-    const catRaw  = rzGet(row, h, 'category').toLowerCase();
+    const rawDate   = rzGet(row, h, 'date of service') || rzGet(row, h, 'date_of_service');
+    const date      = parseRezervDate(rawDate);
+    if (!date) { countSkip++; return; }
 
-    // Classify session category
+    const bookingRef= rzGet(row, h, 'booking ref/no') || rzGet(row, h, 'booking_ref');
+    if (bookingRef && existingRefs.has(bookingRef)) { countSkip++; return; }
+
+    const time      = rzGet(row, h, 'start time') || rzGet(row, h, 'start_time');
+    const staffRaw  = rzGet(row, h, 'staff');
+    const staff     = cleanStaffName(staffRaw);
+    const service   = rzGet(row, h, 'service name') || rzGet(row, h, 'service_name');
+    const payment   = rzGet(row, h, 'payment');
+    const mobile    = rzGet(row, h, 'mobile number') || rzGet(row, h, 'mobile_number') || rzGet(row, h, 'mobile');
+    const email     = rzGet(row, h, 'email address') || rzGet(row, h, 'email_address') || rzGet(row, h, 'email');
+    const revenue   = parseFloat(rzGet(row, h, 'revenue per booking') || rzGet(row, h, 'revenue_per_booking') || '0') || 0;
+    const statusRaw = rzGet(row, h, 'status').toLowerCase();
+    const statusMap = {'completed':'Completed','no show':'No Show','cancelled':'Cancelled','late cancelled':'Cancelled'};
+    const status    = statusMap[statusRaw] || 'Completed';
+    const svcLower  = service.toLowerCase();
+    const catRaw    = rzGet(row, h, 'category').toLowerCase();
+    const typeRaw   = rzGet(row, h, 'service type') || rzGet(row, h, 'service_type');
+
+    // Classify category
     let category = 'Training';
-    if (svc.includes('studio tour') || catRaw.includes('day pass') || svc.includes('day pass')) category = 'Walk-in';
-    else if (svc.includes('trial') || svc.includes('assessment') || svc.includes('orientation')) category = 'Trial';
-    else if (svc.includes('class') || svc.includes('group') || catRaw.includes('group')) category = 'Group Class';
+    if (svcLower.includes('studio tour') || svcLower.includes('tour') || catRaw.includes('day pass')) category = 'Walk-in';
+    else if (svcLower.includes('trial') || svcLower.includes('assessment')) category = 'Trial';
+    else if (typeRaw.toLowerCase() === 'class' || catRaw.includes('group')) category = 'Group Class';
 
-    // Is this person a founding member?
-    const isFoundingMember = foundingNames.has(customer.toLowerCase());
+    const isFounding = foundingNames.has(customer.toLowerCase());
+
+    if (bookingRef) existingRefs.add(bookingRef);
 
     sessions.unshift({
       id: Date.now() + ri,
@@ -4084,35 +4389,17 @@ function rzImportAttendance(rows, h) {
       category,
       type: service || 'Personal Training',
       status,
-      founding: isFoundingMember ? 'Yes — Founding Member' : 'No',
-      notes: 'Rezerv' + (bookingRef ? ' · ' + bookingRef : ''),
-      bookingRef,
+      founding: isFounding ? 'Yes — Founding Member' : '',
       package: mapRezervPackage(payment),
       revenue,
+      bookingRef: bookingRef || null,
+      notes: 'Rezerv' + (bookingRef ? ' · ' + bookingRef : ''),
       importedRezervCSV: true
     });
-    imported++;
+    countSession++;
 
-    if (category === 'Training' && status === 'Completed') autoDeductSession(customer, staff, date);
-
-    // Auto-create member profile if not exists
-    if (!members.some(m => m.name?.toLowerCase() === customer.toLowerCase())) {
-      members.push({
-        id: Date.now() + ri + 50000,
-        name: customer,
-        contact: mobile, email,
-        package: mapRezervPackage(payment),
-        trainer: staff, start: date,
-        status: 'Active',
-        founding: isFoundingMember ? 'Yes — Founding Member' : 'No',
-        goal: 'Corrective Exercise',
-        notes: 'Auto-created from Rezerv Attendance'
-      });
-      memberCreated++;
-    }
-
-    // Walk-ins and Trials → create Lead record
-    if ((category === 'Walk-in' || category === 'Trial') &&
+    // Walk-ins and Trials → Leads
+    if ((category === 'Walk-in' || category === 'Trial') && customer &&
         !leads.some(l => l.name?.toLowerCase() === customer.toLowerCase())) {
       leads.unshift({
         id: Date.now() + ri + 20000,
@@ -4120,396 +4407,286 @@ function rzImportAttendance(rows, h) {
         type: category === 'Trial' ? 'Trial Session' : 'Visit / Walk-in',
         source: 'Rezerv', contact: mobile || email,
         assigned: staff, status: 'New',
-        notes: 'Rezerv · ' + date
+        notes: 'Rezerv · ' + (bookingRef || date)
       });
-      leadCreated++;
+      countLead++;
+    }
+
+    // Auto-create member if not exists
+    if (status === 'Completed' && category === 'Training' &&
+        !members.some(m => m.name?.toLowerCase() === customer.toLowerCase())) {
+      members.push({
+        id: Date.now() + ri + 60000,
+        name: customer, contact: mobile.replace(/^\+/,''), email,
+        package: mapRezervPackage(payment),
+        trainer: staff, start: date,
+        status: 'Active', founding: isFounding ? 'Yes — Founding Member' : 'No',
+        goal: 'Corrective Exercise',
+        notes: 'Auto-created from Rezerv Attendance'
+      });
+      countMember++;
     }
   });
 
   save('sessions', sessions);
   save('leads', leads);
-  if (memberCreated > 0) save('members', members);
+  if (countMember > 0) save('members', members);
 
   return {
-    icon: '📋', type: 'Attendance → Sessions + Members + Leads',
+    icon: '📋', type_label: 'Attendance with Revenue',
     html: [
-      `📋 <strong>${imported}</strong> session records imported`,
-      `👥 <strong>${memberCreated}</strong> new member profiles`,
-      leadCreated > 0 ? `📊 <strong>${leadCreated}</strong> trial/walk-in leads` : '',
-      `⏭ <strong>${skipped}</strong> skipped (duplicate or blank)`
+      `📋 <strong>${countSession}</strong> sessions imported`,
+      countLead > 0   ? `📊 <strong>${countLead}</strong> trial/walk-in leads` : '',
+      countMember > 0 ? `👥 <strong>${countMember}</strong> new member profiles` : '',
+      `⏭ <strong>${countSkip}</strong> skipped`
     ].filter(Boolean).join('<br>')
   };
 }
 
-function rzImportSalesByPlan(rows, h) {
-  return { icon:'📊', type:'Sales by Pricing Plan', html:'Analytics file — no records to import. Use for reference.' };
-}
-
-function rzImportByPackage(rows, h) {
-  return { icon:'📊', type:'Sales by Package', html:'Analytics file — no records to import. Use for reference.' };
-}
-
-function rzImportOvertime(rows, h) {
-  return { icon:'📊', type:'Sales Over Time', html:'Analytics file — no records to import. Use for reference.' };
-}
-
-// ── Success Transactions CSV → Sales + Members + Leads ────────────────────────
-function rzImportTransactions(rows, h) {
-  const sales   = load('sales');
-  const members = load('members');
-  const leads   = load('leads');
-  let importedSales=0, memberCreated=0, leadCreated=0, skipped=0;
-  let foundingNewCount=0, renewalCount=0, newSaleCount=0;
-
-  // Build set of clients who already have a purchase (for upgrade/renewal detection)
-  const existingClients = new Set(sales.map(s => s.client?.toLowerCase()).filter(Boolean));
-
-  rows.forEach((rowStr, ri) => {
-    if (!rowStr.trim()) return;
-    const row = parseCSVRow(rowStr);
-    const get = (c) => c !== null ? (row[h.indexOf(c)] || '').trim() : '';
-
-    // Column mapping using flexible keyword search
-    const col = (kws) => h.find(x => kws.some(k => x.toLowerCase().includes(k))) || null;
-    const cDate      = col(['paid on','paid_on']);
-    const cClient    = col(['customername','customer_name']);
-    const cService   = col(['linked item','linked_item']);
-    const cItemType  = col(['item type','item_type']);
-    const cStaff     = col(['sold by','sold_by']);
-    const cPaidAmt   = col(['paid amount','paid_amount']);
-    const cNetAmt    = col(['net amount','net_amount']);
-    const cGrossAmt  = col(['amount']);
-    const cDisc      = col(['discount']);
-    const cTax       = col(['tax']);
-    const cStatus    = col(['status']);
-    const cRef       = col(['transactionid','transaction_id']);
-    const cMobile    = col(['mobile']);
-    const cEmail     = col(['email']);
-    const cPromo     = col(['promo code','promo_code']);
-    const cMobileCode= col(['mobilecode','mobile code']);
-
-    const rawDate  = get(cDate);
-    const date     = parseRezervDate(rawDate);
-    if (!date) { skipped++; return; }
-
-    const client    = get(cClient);
-    const service   = get(cService);
-    const itemType  = (get(cItemType) || '').toLowerCase();
-    const staff     = cleanStaffName(get(cStaff));
-    const promoCode = (get(cPromo) || '').toUpperCase().trim();
-    const mobile    = get(cMobile) || '';
-    const email     = get(cEmail) || '';
-    const ref       = get(cRef);
-
-    const paidAmt  = parseFloat((get(cPaidAmt) || '0').replace(/[₱,\s]/g,'')) || 0;
-    const netAmt   = parseFloat((get(cNetAmt)  || '0').replace(/[₱,\s]/g,'')) || paidAmt;
-    const grossAmt = parseFloat((get(cGrossAmt)|| '0').replace(/[₱,\s]/g,'')) || 0;
-    const disc     = parseFloat((get(cDisc)    || '0').replace(/[₱,\s]/g,'')) || 0;
-    const tax      = parseFloat((get(cTax)     || '0').replace(/[₱,\s]/g,'')) || 0;
-
-    // Skip zero-paid: Studio Tours, Trials, test entries, free bookings
-    if (paidAmt === 0) { skipped++; return; }
-    // Skip test entries
-    if (client.toLowerCase().includes('test') || client.toLowerCase().includes('rezerv')) { skipped++; return; }
-
-    // De-duplicate by TransactionID
-    const dupKey = ref || (date + '|' + client + '|' + paidAmt);
-    if (sales.some(s => (s.bookingRef && s.bookingRef === ref && ref) || s._txKey === dupKey)) { skipped++; return; }
-
-    // ── CLASSIFY TRANSACTION TYPE ───────────────────────────────────────
-    // 1. FOUNDING50 promo = Founding Member (first purchase with discount)
-    // 2. FOUNDING50RENEWAL / RENEWAL in promo = Renewal
-    // 3. Same client already has a sale = Renewal (bought again)
-    // 4. Else = New Sale
-    const isFoundingOriginal = promoCode === 'FOUNDING50';
-    const isRenewal = promoCode.includes('RENEWAL') ||
-                      promoCode === 'TRUEGRIT60' && existingClients.has(client.toLowerCase());
-    const saleType  = isRenewal ? 'Renewal' : 'New Sale';
-    const founding  = isFoundingOriginal ? 'Yes — Founding Member' : 'No';
-
-    if (isFoundingOriginal) foundingNewCount++;
-    else if (isRenewal) renewalCount++;
-    else newSaleCount++;
-
-    // ── Satisfaction score: auto-compute based on session data ──────────
-    // Will be updated when attendance CSV is imported
-
-    // Detect if this is a Trial or Tour (zero paid handled above, but just in case)
-    const svcLower  = service.toLowerCase();
-    const isTrial   = svcLower.includes('trial') || itemType.includes('trial');
-    const isTour    = svcLower.includes('studio tour') || svcLower.includes('tour');
-    const isPackage = itemType === 'package' || ['grind','resolve','intense','transform'].some(p => svcLower.includes(p));
-
-    // Add to existing clients set for subsequent rows
-    existingClients.add(client.toLowerCase());
-
-    sales.unshift({
-      id: Date.now() + ri,
-      date,
-      client: client || 'Walk-in',
-      package: mapRezervPackage(service),
-      amount: paidAmt,
-      gross: grossAmt || paidAmt,
-      discount: disc, tax, net: netAmt,
-      by: staff || 'Rezerv',
-      type: saleType,
-      status: 'Completed',
-      promoCode: promoCode || null,
-      founding,
-      notes: 'Rezerv' + (promoCode ? ' · ' + promoCode : '') + (ref ? ' · ' + ref : ''),
-      bookingRef: ref || null,
-      _txKey: dupKey,
-      importedRezervCSV: true
-    });
-    importedSales++;
-
-    // Auto-create member profile (for package purchases)
-    if (client && isPackage &&
-        !members.some(m => m.name?.toLowerCase() === client.toLowerCase())) {
-      members.push({
-        id: Date.now() + ri + 50000,
-        name: client, contact: mobile, email,
-        package: mapRezervPackage(service),
-        trainer: staff, start: date,
-        status: 'Active',
-        founding,
-        goal: 'Corrective Exercise',
-        notes: 'Auto-created from Rezerv Transactions' + (promoCode ? ' · ' + promoCode : '')
-      });
-      memberCreated++;
-    }
-
-    // Trials → Lead record
-    if (isTrial && client &&
-        !leads.some(l => l.name?.toLowerCase() === client.toLowerCase())) {
-      leads.unshift({
-        id: Date.now() + ri + 20000,
-        date, name: client,
-        type: 'Trial Session',
-        source: 'Rezerv', contact: mobile || email,
-        assigned: staff, status: 'New',
-        notes: 'Rezerv Transactions · ' + ref
-      });
-      leadCreated++;
-    }
-  });
-
-  save('sales', sales);
-  save('members', members);
-  save('leads', leads);
-
-  return {
-    icon: '💳',
-    type: 'Transactions → Sales + Members + Leads',
-    html: [
-      `💳 <strong>${importedSales}</strong> sales records imported`,
-      `⭐ <strong style="color:var(--gold);">${foundingNewCount}</strong> founding members`,
-      `🔄 <strong>${renewalCount}</strong> renewals`,
-      `💰 <strong>${newSaleCount}</strong> new sales`,
-      memberCreated > 0 ? `👥 <strong>${memberCreated}</strong> member profiles created` : '',
-      leadCreated > 0   ? `📊 <strong>${leadCreated}</strong> trial leads` : '',
-      `⏭ <strong>${skipped}</strong> skipped (free/test/duplicate)`
-    ].filter(Boolean).join('<br>')
-  };
-}
-
-// ── Customer Report CSV → Members (with founding flag from existing sales) ────
+// ══════════════════════════════════════════════════════════════════════
+// IMPORTER 3: CUSTOMER REPORT → Members (update or create)
+// ══════════════════════════════════════════════════════════════════════
 function rzImportCustomerReport(rows, h) {
   const members = load('members');
-  // Get founding names from sales already imported
-  const foundingSales = load('sales').filter(s => s.founding === 'Yes — Founding Member');
-  const foundingNames = new Set(foundingSales.map(s => s.client?.toLowerCase()));
+  const sales   = load('sales');
+  const foundingNames = new Set(
+    sales.filter(s => s.founding === 'Yes — Founding Member').map(s => s.client?.toLowerCase())
+  );
 
-  let imported=0, updated=0, skipped=0;
-
-  const col = (kws) => h.find(x => kws.some(k => x.toLowerCase().includes(k))) || null;
-  const cName    = col(['customername','customer_name']);
-  const cMobile  = col(['mobile']);
-  const cEmail   = col(['email']);
-  const cDOB     = col(['dateofbirth','date_of_birth','dob']);
-  const cGender  = col(['gender']);
-  const cJoined  = col(['joineddate','joined_date','joined']);
-  const cStatus  = col(['status']);
-  const cMship   = col(['membership']);
-  const cComp    = col(['completed']);
-  const cTotal   = col(['total booking','total_booking']);
+  let countNew=0, countUpdate=0, countSkip=0;
 
   rows.forEach((rowStr, ri) => {
     if (!rowStr.trim()) return;
     const row = parseCSVRow(rowStr);
-    const get = (c) => c !== null ? (row[h.indexOf(c)] || '').trim() : '';
+    const name = rzGet(row, h, 'customername') || rzGet(row, h, 'customer_name');
+    if (!name || name.toLowerCase().includes('test')) { countSkip++; return; }
 
-    const name = get(cName);
-    if (!name || name.toLowerCase().includes('test') || name.toLowerCase().includes('rezerv')) { skipped++; return; }
-
-    const mobile    = get(cMobile);
-    const email     = get(cEmail);
-    const dob       = get(cDOB);
-    const gender    = get(cGender);
-    const joinedRaw = get(cJoined);
-    const membership= get(cMship) || 'Non Member';
-    const completed = parseInt(get(cComp)) || 0;
-    const total     = parseInt(get(cTotal)) || 0;
-    const isActive  = membership.includes('Active') || membership.includes('Member');
+    const mobile    = rzGet(row, h, 'mobile');
+    const email     = rzGet(row, h, 'email');
+    const dob       = rzGet(row, h, 'dateofbirth') || rzGet(row, h, 'date_of_birth');
+    const gender    = rzGet(row, h, 'gender');
+    const joinedRaw = rzGet(row, h, 'joineddate') || rzGet(row, h, 'joined_date') || rzGet(row, h, 'joined on');
+    const membership= rzGet(row, h, 'membership') || 'Non Member';
+    const completed = parseInt(rzGet(row, h, 'completed') || '0') || 0;
+    const total     = parseInt(rzGet(row, h, 'total booking') || rzGet(row, h, 'total_booking') || '0') || 0;
+    const isActive  = membership.toLowerCase().includes('active') || membership.toLowerCase().includes('member');
     const founding  = foundingNames.has(name.toLowerCase()) ? 'Yes — Founding Member' : 'No';
 
     // Satisfaction score: completion rate + renewal bonus
-    const completionRate = total > 0 ? (completed / total) : 0;
-    const foundingSales2 = load('sales').filter(s => s.client?.toLowerCase() === name.toLowerCase());
-    const hasRenewed = foundingSales2.some(s => s.type === 'Renewal');
-    const satScore = Math.min(10, Math.round(completionRate * 8) + (hasRenewed ? 2 : 0));
+    const rate       = total > 0 ? completed / total : 0;
+    const hasRenewed = sales.some(s => s.client?.toLowerCase() === name.toLowerCase() && s.type === 'Renewal');
+    const satScore   = Math.min(10, Math.round(rate * 8) + (hasRenewed ? 2 : 0));
 
-    // Parse joined date (format: 28/02/26 08:57 or 22/12/25 09:28)
+    // Parse joined date
     let joined = '';
     if (joinedRaw) {
       const parts = joinedRaw.split(' ')[0].split('/');
       if (parts.length === 3) {
         const yr = parseInt(parts[2]) < 100 ? '20' + parts[2] : parts[2];
         joined = `${yr}-${parts[1].padStart(2,'0')}-${parts[0].padStart(2,'0')}`;
-      }
+      } else joined = parseRezervDate(joinedRaw);
     }
 
-    const existingIdx = members.findIndex(m => m.name?.toLowerCase() === name.toLowerCase());
-    if (existingIdx >= 0) {
-      // Update existing with richer data
-      members[existingIdx] = {
-        ...members[existingIdx],
-        contact: mobile || members[existingIdx].contact,
-        email: email || members[existingIdx].email,
-        dob, gender, start: joined || members[existingIdx].start,
-        status: isActive ? 'Active' : 'Inactive',
-        founding,
-        satScore,
-        completedSessions: completed,
-        totalBookings: total,
-        membership
-      };
-      updated++;
+    const existIdx = members.findIndex(m => m.name?.toLowerCase() === name.toLowerCase());
+    const record = {
+      contact: mobile, email, dob, gender,
+      start: joined || undefined,
+      status: isActive ? 'Active' : 'Inactive',
+      founding, satScore, completedSessions: completed, totalBookings: total, membership
+    };
+
+    if (existIdx >= 0) {
+      members[existIdx] = { ...members[existIdx], ...record,
+        contact: mobile || members[existIdx].contact,
+        email: email || members[existIdx].email,
+        start: joined || members[existIdx].start };
+      countUpdate++;
     } else {
-      members.push({
-        id: Date.now() + ri + 70000,
-        name, contact: mobile, email,
-        dob, gender, start: joined,
-        status: isActive ? 'Active' : 'Inactive',
-        founding, satScore,
-        completedSessions: completed,
-        totalBookings: total,
-        membership,
-        goal: 'Corrective Exercise',
-        notes: 'Imported from Rezerv Customer Report',
-        importedRezervCSV: true
-      });
-      imported++;
+      members.push({ id: Date.now() + ri + 70000, name, ...record,
+        goal: 'Corrective Exercise', notes: 'Rezerv Customer Report', importedRezervCSV: true });
+      countNew++;
     }
   });
 
   save('members', members);
   return {
-    icon: '👥', type: 'Customer Report → Members',
+    icon: '👥', type_label: 'Customer Report',
     html: [
-      `👥 <strong>${imported}</strong> new member profiles`,
-      updated > 0 ? `✏️ <strong>${updated}</strong> profiles updated with full details` : '',
-      `⏭ <strong>${skipped}</strong> skipped (test accounts or blank)`
+      countNew > 0    ? `👥 <strong>${countNew}</strong> new profiles created` : '',
+      countUpdate > 0 ? `✏️ <strong>${countUpdate}</strong> profiles updated` : '',
+      `⏭ <strong>${countSkip}</strong> skipped`
     ].filter(Boolean).join('<br>')
   };
 }
 
-// ── Class Attendance Summary CSV → Utilization Data ──────────────────────────
+// ══════════════════════════════════════════════════════════════════════
+// IMPORTER 4: CLASS ATTENDANCE → Sessions + Utilization
+// ══════════════════════════════════════════════════════════════════════
 function rzImportClassAttendance(rows, h) {
-  // This CSV is used for utilization calculation
-  // Store raw data for the utilization calculator
-  let totalSlots=0, totalBooked=0, totalCompleted=0, totalNoShow=0, totalCancelled=0;
-  let operatingDays = new Set();
-  let imported=0, skipped=0;
-
   const sessions = load('sessions');
-
-  const col = (kws) => h.find(x => kws.some(k => x.toLowerCase().includes(k))) || null;
-  const cClass     = col(['classname','class_name']);
-  const cDate      = col(['date']);
-  const cTime      = col(['time']);
-  const cStaff     = col(['staff']);
-  const cCapacity  = col(['capacity']);
-  const cBooked    = col(['booked']);
-  const cCompleted = col(['completed']);
-  const cNoShow    = col(['noshow','no show','no_show']);
-  const cCancelled = col(['cancelled']);
-  const cStatus    = col(['status']);
+  const existingKeys = new Set(sessions.map(s => s._classKey).filter(Boolean));
+  let countNew=0, countSkip=0;
+  let totalCap=0, totalBooked=0, totalDone=0, totalNoShow=0, totalCancelled=0;
+  const opDays = new Set();
 
   rows.forEach((rowStr, ri) => {
     if (!rowStr.trim()) return;
     const row = parseCSVRow(rowStr);
-    const get = (c) => c !== null ? (row[h.indexOf(c)] || '').trim() : '';
+    const rawDate    = rzGet(row, h, 'date');
+    const date       = parseRezervDate(rawDate);
+    if (!date) { countSkip++; return; }
 
-    const rawDate    = get(cDate);
-    // Parse Rezerv date format: 2026-Jan-01
-    let date = rawDate;
-    if (rawDate.match(/\d{4}-[A-Za-z]{3}-\d{2}/)) {
-      const mo = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
-      const p = rawDate.split('-');
-      date = `${p[0]}-${mo[p[1]]||'01'}-${p[2].padStart(2,'0')}`;
-    }
-    if (!date) { skipped++; return; }
+    const className  = rzGet(row, h, 'classname') || rzGet(row, h, 'class_name') || 'Personal Training';
+    const time       = rzGet(row, h, 'time');
+    const staff      = cleanStaffName(rzGet(row, h, 'staff'));
+    const capacity   = parseInt(rzGet(row, h, 'capacity') || '3') || 3;
+    const booked     = parseInt(rzGet(row, h, 'booked') || '0') || 0;
+    const completed  = parseInt(rzGet(row, h, 'completed') || '0') || 0;
+    const noshow     = parseInt(rzGet(row, h, 'noshow') || rzGet(row, h, 'no show') || '0') || 0;
+    const cancelled  = parseInt(rzGet(row, h, 'cancelled') || '0') || 0;
 
-    const className  = get(cClass);
-    const time       = get(cTime);
-    const staff      = cleanStaffName(get(cStaff));
-    const capacity   = parseInt(get(cCapacity)) || 3;
-    const booked     = parseInt(get(cBooked))   || 0;
-    const completed  = parseInt(get(cCompleted)) || 0;
-    const noshow     = parseInt(get(cNoShow))    || 0;
-    const cancelled  = parseInt(get(cCancelled)) || 0;
-
-    totalSlots     += capacity;
+    totalCap       += capacity;
     totalBooked    += booked;
-    totalCompleted += completed;
+    totalDone      += completed;
     totalNoShow    += noshow;
     totalCancelled += cancelled;
-    operatingDays.add(date);
+    opDays.add(date);
 
-    // De-duplicate sessions
-    const dupKey = date + '|' + time + '|' + staff;
-    if (sessions.some(s => s._classKey === dupKey)) { skipped++; return; }
+    const classKey = date + '|' + time + '|' + staff;
+    if (existingKeys.has(classKey)) { countSkip++; return; }
+    existingKeys.add(classKey);
 
     sessions.unshift({
       id: Date.now() + ri,
       date, time,
-      member: completed > 0 ? `${completed} attended` : 'No bookings',
-      trainer: staff,
-      category: className?.toLowerCase().includes('group') ? 'Group Class' : 'Training',
-      type: className || 'Personal Training',
-      status: completed > 0 ? 'Completed' : noshow > 0 ? 'No Show' : 'Cancelled',
-      notes: `Attendance: ${completed} done · ${noshow} no-show · ${cancelled} cancelled`,
-      _classKey: dupKey,
-      importedRezervCSV: true
+      member: completed > 0 ? completed + ' attended' : '—',
+      trainer: staff, category: 'Training',
+      type: className, status: completed > 0 ? 'Completed' : noshow > 0 ? 'No Show' : 'Cancelled',
+      notes: `Completed:${completed} · NoShow:${noshow} · Cancelled:${cancelled}`,
+      _classKey: classKey, importedRezervCSV: true
     });
-    imported++;
+    countNew++;
   });
 
   save('sessions', sessions);
 
-  // Save utilization data for the calculator
-  const days = operatingDays.size;
-  // Studio: 8AM-8PM = 12 hrs/day, max 3 clients/hr = 36 sessions/day
-  const studioHrsPerDay = 12;
-  const maxClientsPerHr = 3;
-  const maxCapacity = days * studioHrsPerDay * maxClientsPerHr;
-  const utilRate = maxCapacity > 0 ? (totalCompleted / maxCapacity * 100) : 0;
-
+  // Save utilization data
+  const days = opDays.size;
+  const maxCap = days * 12 * 3; // 12hrs × 3 clients
+  const utilRate = maxCap > 0 ? (totalDone / maxCap * 100).toFixed(1) : '0';
   localStorage.setItem('tgs_utilization', JSON.stringify({
-    days, totalSlots, totalBooked, totalCompleted, totalNoShow, totalCancelled,
-    maxCapacity, utilRate: utilRate.toFixed(1),
+    days, totalCap, totalBooked, totalDone, totalNoShow, totalCancelled, maxCap, utilRate,
     updatedAt: new Date().toISOString()
   }));
 
   return {
-    icon: '📅', type: 'Class Attendance → Sessions + Utilization',
+    icon: '📅', type_label: 'Class Attendance',
     html: [
-      `📅 <strong>${imported}</strong> class records imported`,
-      `✅ <strong>${totalCompleted}</strong> completed · ❌ <strong>${totalNoShow}</strong> no-shows · 🚫 <strong>${totalCancelled}</strong> cancelled`,
-      `📊 Utilization: <strong style="color:var(--gold);">${utilRate.toFixed(1)}%</strong> of studio capacity (${days} operating days)`,
-      `⏭ <strong>${skipped}</strong> skipped (duplicate)`
+      `📅 <strong>${countNew}</strong> class records imported`,
+      `✅ <strong>${totalDone}</strong> completed · ❌ <strong>${totalNoShow}</strong> no-shows · 🚫 <strong>${totalCancelled}</strong> cancelled`,
+      `📊 Utilization: <strong style="color:var(--gold)">${utilRate}%</strong> (${days} operating days · max 3 clients/hr · 8AM–8PM)`
     ].join('<br>')
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// IMPORTER 5: SALES BY PRICING PLAN → Reference only
+// ══════════════════════════════════════════════════════════════════════
+function rzImportPricingPlan(rows, h) {
+  let summary = [], total = 0;
+  rows.forEach(rowStr => {
+    if (!rowStr.trim()) return;
+    const row = parseCSVRow(rowStr);
+    const plan = rzGet(row, h, 'pricingplan') || rzGet(row, h, 'plan name') || rzGet(row, h, 'pricing plan');
+    const qty  = rzGet(row, h, 'quantity');
+    const amt  = parseFloat((rzGet(row, h, 'totalsales') || rzGet(row, h, 'total sales') || '0').replace(/[,\s]/g,'')) || 0;
+    if (plan && amt > 0) { summary.push(`${plan} × ${qty} = ₱${amt.toLocaleString()}`); total += amt; }
+  });
+  return {
+    icon: '📊', type_label: 'Sales by Pricing Plan (Reference)',
+    html: summary.join('<br>') + `<br><strong>Total: ₱${total.toLocaleString()}</strong><br><small style="color:var(--muted)">Analytics file — no records imported to dashboard</small>`
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// IMPORTER 6: SALES BY CLASS → Reference only
+// ══════════════════════════════════════════════════════════════════════
+function rzImportByClass(rows, h) {
+  let categories = {}, total = 0;
+  rows.forEach(rowStr => {
+    if (!rowStr.trim()) return;
+    const row = parseCSVRow(rowStr);
+    const name   = rzGet(row, h, 'classname') || rzGet(row, h, 'class_name') || rzGet(row, h, 'class');
+    const iscat  = (rzGet(row, h, 'iscategory') || '').toLowerCase() === 'true';
+    const amt    = parseFloat((rzGet(row, h, 'totalsales') || rzGet(row, h, 'total sales') || '0').replace(/[,\s]/g,'')) || 0;
+    if (!iscat && amt > 0) { categories[name] = (categories[name]||0) + amt; total += amt; }
+  });
+  const lines = Object.entries(categories).map(([n,v]) => `${n}: ₱${v.toLocaleString()}`);
+  return {
+    icon: '📊', type_label: 'Sales by Class (Reference)',
+    html: (lines.join('<br>')||'No revenue data') + `<br><small style="color:var(--muted)">Analytics file — no records imported to dashboard</small>`
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// IMPORTER 7: SALES BY PACKAGE → Reference only
+// ══════════════════════════════════════════════════════════════════════
+function rzImportByPackage(rows, h) {
+  let lines = [], total = 0;
+  rows.forEach(rowStr => {
+    if (!rowStr.trim()) return;
+    const row  = parseCSVRow(rowStr);
+    const name = rzGet(row, h, 'package');
+    const iscat= (rzGet(row, h, 'iscategory')||'').toLowerCase() === 'true';
+    const def  = parseFloat((rzGet(row, h, 'deferred_totalsales') || rzGet(row, h, 'deferred total') || '0').replace(/[,\s]/g,'')) || 0;
+    if (!iscat && def > 0) { lines.push(`${name}: ₱${def.toLocaleString()}`); total += def; }
+  });
+  return {
+    icon: '📊', type_label: 'Sales by Package (Reference)',
+    html: (lines.join('<br>')||'No data') + `<br><strong>Deferred Total: ₱${total.toLocaleString()}</strong><br><small style="color:var(--muted)">Analytics file — no records imported to dashboard</small>`
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// IMPORTER 8: SALES OVER TIME → Reference only
+// ══════════════════════════════════════════════════════════════════════
+function rzImportOvertime(rows, h) {
+  return {
+    icon: '📊', type_label: 'Sales Over Time (Reference)',
+    html: `<small style="color:var(--muted)">Analytics file — no records imported to dashboard</small>`
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// IMPORTER 9: TGS MEMBERS CSV EXPORT → Re-import our own export
+// ══════════════════════════════════════════════════════════════════════
+function rzImportTGSMembers(rows, h) {
+  const members = load('members');
+  let countNew=0, countSkip=0;
+  rows.forEach((rowStr, ri) => {
+    if (!rowStr.trim()) return;
+    const row  = parseCSVRow(rowStr);
+    const name = rzGet(row, h, 'name');
+    if (!name || members.some(m => m.name?.toLowerCase() === name.toLowerCase())) { countSkip++; return; }
+    members.push({
+      id: Date.now() + ri,
+      name,
+      age:     rzGet(row, h, 'age'),
+      contact: rzGet(row, h, 'contact'),
+      email:   rzGet(row, h, 'email'),
+      package: rzGet(row, h, 'package'),
+      trainer: rzGet(row, h, 'trainer'),
+      goal:    rzGet(row, h, 'goal'),
+      start:   rzGet(row, h, 'start'),
+      notes:   rzGet(row, h, 'notes'),
+      status: 'Active'
+    });
+    countNew++;
+  });
+  save('members', members);
+  return {
+    icon: '👥', type_label: 'TGS Members Export',
+    html: `👥 <strong>${countNew}</strong> members re-imported · ⏭ <strong>${countSkip}</strong> skipped (duplicate)`
   };
 }
 
@@ -7682,6 +7859,271 @@ shakeStyle.textContent = `
 document.head.appendChild(shakeStyle);
 
 // ============================
+// ══════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════
+// DATA HEALTH PAGE
+// ══════════════════════════════════════════════════════════════════════
+
+function openDataHealth() {
+  closeModal('modalRezervImport');
+  showPage('datahealth');
+  renderDataHealth();
+}
+
+function showDhTab(tab) {
+  ['dupes','missing','orphans','log'].forEach(t => {
+    document.getElementById('dhPanel-' + t).style.display = t === tab ? '' : 'none';
+    const btn = document.getElementById('dhtab-' + t);
+    btn.classList.toggle('dh-tab-active', t === tab);
+  });
+}
+
+function renderDataHealth() {
+  const members  = load('members');
+  const sessions = load('sessions');
+  const leads    = load('leads');
+  const sales    = load('sales');
+  const log      = load('log');
+
+  // ── Summary Cards ──────────────────────────────────────────────
+  const dupeMembers  = findDuplicates(members,  m => m.name?.toLowerCase().trim());
+  const dupeSales    = findDuplicates(sales,     s => s.bookingRef || (s.date + '|' + s.client + '|' + s.amount));
+  const dupeSessions = findDuplicates(sessions,  s => s.bookingRef || s._classKey || (s.date + '|' + s.time + '|' + s.member));
+  const missingContact = members.filter(m => !m.contact && !m.email);
+  const noTrainer    = sessions.filter(s => !s.trainer && s.status === 'Completed');
+
+  const totalIssues = dupeMembers.length + dupeSales.length + dupeSessions.length;
+
+  const cards = [
+    { label:'Total Records',   value: members.length + sessions.length + sales.length + leads.length, color:'var(--cream)', icon:'🗂' },
+    { label:'Members',         value: members.length,   color:'var(--green)', icon:'👥' },
+    { label:'Sessions',        value: sessions.length,  color:'#7aaac8',     icon:'📋' },
+    { label:'Sales',           value: sales.length,     color:'var(--gold)', icon:'💰' },
+    { label:'Leads',           value: leads.length,     color:'#a07ac8',     icon:'📊' },
+    { label:'Issues Found',    value: totalIssues,      color: totalIssues > 0 ? '#c07070' : 'var(--green)', icon: totalIssues > 0 ? '⚠' : '✅' },
+  ];
+
+  document.getElementById('dhSummaryCards').innerHTML = cards.map(c => `
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;">
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:0.08em;">${c.icon} ${c.label}</div>
+      <div style="font-size:26px;font-weight:700;color:${c.color};font-family:'DM Mono',monospace;margin-top:2px;">${c.value}</div>
+    </div>`).join('');
+
+  // ── Tab: Duplicates ─────────────────────────────────────────────
+  let dupeHtml = '';
+
+  if (dupeMembers.length) {
+    dupeHtml += dhSectionHeader('👥 Duplicate Members', dupeMembers.length, `removeDuplicates('members')`);
+    dupeMembers.forEach(([key, items]) => {
+      const names = items.map(m => `<strong>${m.name}</strong> (ID:${m.id})`).join(' · ');
+      dupeHtml += dhRow('DUPE', 'dh-badge-dupe', names, `Keep latest — ${items.length} duplicates`, `removeDupe('members','${key}')`);
+    });
+  }
+
+  if (dupeSales.length) {
+    dupeHtml += dhSectionHeader('💰 Duplicate Sales', dupeSales.length, `removeDuplicates('sales')`);
+    dupeSales.forEach(([key, items]) => {
+      const desc = items.map(s => `${s.date} · ${s.client} · ₱${(s.amount||0).toLocaleString()}`)[0];
+      dupeHtml += dhRow('DUPE', 'dh-badge-dupe', desc, `${items.length}× duplicated`, `removeDupe('sales','${key}')`);
+    });
+  }
+
+  if (dupeSessions.length) {
+    dupeHtml += dhSectionHeader('📋 Duplicate Sessions', dupeSessions.length, `removeDuplicates('sessions')`);
+    dupeSessions.forEach(([key, items]) => {
+      const desc = items.map(s => `${s.date} · ${s.member} · ${s.trainer}`)[0];
+      dupeHtml += dhRow('DUPE', 'dh-badge-dupe', desc, `${items.length}× duplicated`, `removeDupe('sessions','${key}')`);
+    });
+  }
+
+  if (!dupeHtml) dupeHtml = '<div style="padding:32px;text-align:center;color:var(--green);font-size:14px;">✅ No duplicates found</div>';
+  document.getElementById('dhPanel-dupes').innerHTML = dhPanel(dupeHtml);
+
+  // ── Tab: Missing Data ────────────────────────────────────────────
+  let missingHtml = '';
+
+  if (missingContact.length) {
+    missingHtml += dhSectionHeader('📵 Members without contact', missingContact.length);
+    missingContact.forEach(m => {
+      missingHtml += dhRow('WARN', 'dh-badge-warn', `<strong>${m.name}</strong>`, 'No phone or email on record', null, `editEntry('members',${m.id})`);
+    });
+  }
+
+  if (noTrainer.length) {
+    missingHtml += dhSectionHeader('👤 Completed sessions without trainer', noTrainer.length);
+    noTrainer.slice(0,20).forEach(s => {
+      missingHtml += dhRow('WARN', 'dh-badge-warn', `${s.date} · <strong>${s.member}</strong>`, 'No trainer assigned', null, `editEntry('sessions',${s.id})`);
+    });
+  }
+
+  const noPackageMember = members.filter(m => !m.package || m.package === '');
+  if (noPackageMember.length) {
+    missingHtml += dhSectionHeader('📦 Members without package', noPackageMember.length);
+    noPackageMember.slice(0,20).forEach(m => {
+      missingHtml += dhRow('WARN', 'dh-badge-warn', `<strong>${m.name}</strong>`, 'No package assigned', null, `editEntry('members',${m.id})`);
+    });
+  }
+
+  if (!missingHtml) missingHtml = '<div style="padding:32px;text-align:center;color:var(--green);font-size:14px;">✅ All records have required fields</div>';
+  document.getElementById('dhPanel-missing').innerHTML = dhPanel(missingHtml);
+
+  // ── Tab: Orphaned Records ────────────────────────────────────────
+  let orphanHtml = '';
+  const memberNames = new Set(members.map(m => m.name?.toLowerCase()));
+
+  const orphanSessions = sessions.filter(s => s.member && s.member !== '—' &&
+    !s._classKey && !memberNames.has(s.member?.toLowerCase()) &&
+    !s.member.toLowerCase().includes('attended'));
+  const orphanLeads = leads.filter(l => l.name && !memberNames.has(l.name?.toLowerCase()) && l.status === 'Converted');
+
+  if (orphanSessions.length) {
+    orphanHtml += dhSectionHeader('📋 Sessions with unknown members', orphanSessions.length);
+    orphanSessions.slice(0,20).forEach(s => {
+      orphanHtml += dhRow('INFO', 'dh-badge-info', `${s.date} · <strong>${s.member}</strong>`, 'Member not in registry', `createMemberFromSession(${s.id})`, null);
+    });
+  }
+
+  if (orphanLeads.length) {
+    orphanHtml += dhSectionHeader('📊 Converted leads without member profile', orphanLeads.length);
+    orphanLeads.forEach(l => {
+      orphanHtml += dhRow('INFO', 'dh-badge-info', `<strong>${l.name}</strong>`, 'Marked Converted but no Member record', `createMemberFromLead(${l.id})`, null);
+    });
+  }
+
+  if (!orphanHtml) orphanHtml = '<div style="padding:32px;text-align:center;color:var(--green);font-size:14px;">✅ No orphaned records found</div>';
+  document.getElementById('dhPanel-orphans').innerHTML = dhPanel(orphanHtml);
+
+  // ── Tab: Import Log ──────────────────────────────────────────────
+  const importLogs = log.filter(l => l.cat === 'Import' || l.notes?.includes('Rezerv') || l.notes?.includes('Import'));
+  const adminLogs  = log.filter(l => l.cat === 'Admin').slice(0, 30);
+
+  let logHtml = '';
+  if (importLogs.length) {
+    logHtml += dhSectionHeader('📥 Recent Imports', importLogs.length);
+    importLogs.slice(0,20).forEach(l => {
+      logHtml += dhRow('INFO', 'dh-badge-info', `<strong>${l.date}</strong> · ${l.staff}`, l.notes, null, null);
+    });
+  }
+  logHtml += dhSectionHeader('🔧 Admin Actions', adminLogs.length);
+  if (adminLogs.length) {
+    adminLogs.forEach(l => {
+      logHtml += dhRow('INFO', 'dh-badge-info', `<strong>${l.date}</strong> · ${l.staff}`, l.notes, null, null);
+    });
+  } else {
+    logHtml += '<div style="padding:16px;color:var(--muted);font-size:13px;">No admin actions logged yet.</div>';
+  }
+  document.getElementById('dhPanel-log').innerHTML = dhPanel(logHtml);
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────
+function findDuplicates(arr, keyFn) {
+  const map = {};
+  arr.forEach(item => {
+    const k = keyFn(item);
+    if (!k) return;
+    if (!map[k]) map[k] = [];
+    map[k].push(item);
+  });
+  return Object.entries(map).filter(([,v]) => v.length > 1);
+}
+
+function dhSectionHeader(title, count, fixAllFn) {
+  return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px 6px;border-bottom:1px solid var(--border);background:var(--bg3);">
+    <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.1em;">${title} <span style="color:var(--gold);">(${count})</span></div>
+    ${fixAllFn ? `<button class="dh-fix-btn" onclick="${fixAllFn}">Fix All</button>` : ''}
+  </div>`;
+}
+
+function dhRow(badge, badgeClass, main, sub, fixFn, editFn) {
+  return `<div class="dh-issue-row">
+    <span class="dh-issue-badge ${badgeClass}">${badge}</span>
+    <div style="flex:1;min-width:0;">
+      <div style="color:var(--cream);">${main}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px;">${sub||''}</div>
+    </div>
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      ${fixFn  ? `<button class="dh-fix-btn" style="background:rgba(192,112,112,0.1);border-color:rgba(192,112,112,0.3);color:#c07070;" onclick="${fixFn}">🗑 Remove</button>` : ''}
+      ${editFn ? `<button class="dh-fix-btn" onclick="${editFn}">✏ Fix</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function dhPanel(inner) {
+  return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;">${inner}</div>`;
+}
+
+// ── Fix Actions ──────────────────────────────────────────────────────
+function removeDuplicates(store) {
+  const data = load(store);
+  const seen = new Set();
+  let removed = 0;
+  const cleaned = data.filter(item => {
+    let key;
+    if (store === 'members')  key = item.name?.toLowerCase().trim();
+    if (store === 'sales')    key = item.bookingRef || (item.date + '|' + item.client + '|' + item.amount);
+    if (store === 'sessions') key = item.bookingRef || item._classKey || (item.date + '|' + item.time + '|' + item.member);
+    if (!key) return true;
+    if (seen.has(key)) { removed++; return false; }
+    seen.add(key); return true;
+  });
+  save(store, cleaned);
+  clearCache(store);
+  toast(`✅ Removed ${removed} duplicate(s) from ${store}`);
+  renderDataHealth();
+  renderAll();
+}
+
+function removeDupe(store, key) {
+  const data = load(store);
+  let found = false;
+  const cleaned = data.filter(item => {
+    let itemKey;
+    if (store === 'members')  itemKey = item.name?.toLowerCase().trim();
+    if (store === 'sales')    itemKey = item.bookingRef || (item.date + '|' + item.client + '|' + item.amount);
+    if (store === 'sessions') itemKey = item.bookingRef || item._classKey || (item.date + '|' + item.time + '|' + item.member);
+    if (itemKey === key) {
+      if (found) return false; // remove duplicates, keep first
+      found = true;
+    }
+    return true;
+  });
+  save(store, cleaned);
+  clearCache(store);
+  toast('✅ Duplicate removed');
+  renderDataHealth();
+  renderAll();
+}
+
+function createMemberFromSession(sessionId) {
+  const sessions = load('sessions');
+  const s = sessions.find(x => x.id === sessionId);
+  if (!s || !s.member) return;
+  const members = load('members');
+  if (members.some(m => m.name?.toLowerCase() === s.member.toLowerCase())) {
+    return toast('Member already exists');
+  }
+  members.push({ id: Date.now(), name: s.member, trainer: s.trainer, start: s.date, status: 'Active', founding: 'No', notes: 'Created from session record' });
+  save('members', members);
+  toast(`✅ Member "${s.member}" created`);
+  renderDataHealth(); renderAll();
+}
+
+function createMemberFromLead(leadId) {
+  const leads = load('leads');
+  const l = leads.find(x => x.id === leadId);
+  if (!l) return;
+  const members = load('members');
+  if (members.some(m => m.name?.toLowerCase() === l.name.toLowerCase())) {
+    return toast('Member already exists');
+  }
+  members.push({ id: Date.now(), name: l.name, contact: l.contact, start: l.date, status: 'Active', founding: 'No', notes: 'Converted from lead' });
+  save('members', members);
+  toast(`✅ Member "${l.name}" created from lead`);
+  renderDataHealth(); renderAll();
+}
+
+
+
 // INIT
 // ============================
 document.querySelectorAll('.overlay').forEach(o => {
