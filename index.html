@@ -1854,7 +1854,7 @@
     <div class="modal-body">
       <div id="rezervImportResults" style="display:flex;flex-direction:column;gap:12px;"></div>
       <div class="form-actions" style="margin-top:16px;">
-        <button class="btn btn-gold" onclick="closeModal('modalRezervImport');renderAll();">✓ Done</button>
+        <button class="btn btn-gold" onclick="closeModal('modalRezervImport');clearCache();renderAll();">✓ Done</button>
       </div>
     </div>
   </div>
@@ -2706,6 +2706,16 @@ function load(key) {
 function save(key, data) {
   _cache[key] = data;
   localStorage.setItem(KEYS[key] || ('tgs_' + key), JSON.stringify(data));
+}
+
+function clearCache(key) {
+  if (key) {
+    delete _cache[key];
+    delete _cache['tgs_' + key];
+    delete _cache[key.replace('tgs_','')];
+  } else {
+    Object.keys(_cache).forEach(k => delete _cache[k]);
+  }
 }
 
 // ── Startup init (localStorage only) ────────────────────────────
@@ -7542,7 +7552,14 @@ function executeReset() {
     'sales':'tgs_sales','sat':'tgs_sat','log':'tgs_log','expenses':'tgs_expenses',
     'tgs_trainer_clients':'tgs_trainer_clients','tgs_sessions':'tgs_sessions','tgs_member_docs':'tgs_member_docs',
   };
-  checked.forEach(k => { localStorage.setItem(KEY_MAP[k]||k, JSON.stringify([])); });
+  checked.forEach(k => {
+    const storageKey = KEY_MAP[k] || k;
+    localStorage.setItem(storageKey, JSON.stringify([]));
+    // ★ Clear in-memory cache so load() re-reads from localStorage
+    delete _cache[k];
+    delete _cache[storageKey];
+    delete _cache[storageKey.replace('tgs_','')];
+  });
   logAdminAction('RESET', 'Reset tabs: ' + checked.join(', '));
   closeModal('modalResetTab');
   _selectedIds = {};
